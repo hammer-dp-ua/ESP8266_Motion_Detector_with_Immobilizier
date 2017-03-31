@@ -1,0 +1,15 @@
+eclipse.preferences.version=1
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/BIN_PATH/delimiter=;
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/BIN_PATH/operation=append
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/BIN_PATH/value=/c/Users/USER/ESP8266/ESP8266_RTOS_SDK/bin
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/BIN_PATH_WIN/delimiter=;
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/BIN_PATH_WIN/operation=append
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/BIN_PATH_WIN/value=C\:\\Users\\USER\\ESP8266\\ESP8266_RTOS_SDK\\bin
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/FOTA_PATH/delimiter=;
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/FOTA_PATH/operation=append
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/FOTA_PATH/value=Z\:\\USER\\workspace\\ESP8266_FOTA
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/SDK_PATH/delimiter=;
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/SDK_PATH/operation=append
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/SDK_PATH/value=/c/Users/USER/ESP8266/ESP8266_RTOS_SDK
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/append=true
+environment/project/cdt.managedbuild.config.gnu.cross.exe.debug.1361290673/appendContributed=true
