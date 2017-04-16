@@ -1,10 +1,20 @@
 /**
  * Pins 4 and 5 on some ESP8266-07 are exchanged on silk screen!!!
+ *
+ * SPI SPI_CPOL & SPI_CPHA:
+ *    SPI_CPOL - (0) Clock is low when inactive
+ *               (1) Clock is high when inactive
+ *    SPI_CPHA - (0) Data is valid on clock leading edge
+ *               (1) Data is valid on clock trailing edge
  */
 
 #include "esp_common.h"
+
+// driver libs
 #include "uart.h"
 #include "gpio.h"
+#include "spi_interface.h"
+
 #include "esp_sta.h"
 #include "esp_wifi.h"
 #include "upgrade.h"
@@ -138,14 +148,9 @@ void autoconnect_task(void *pvParameters) {
 }
 
 void ICACHE_FLASH_ATTR testing_task(void *pvParameters) {
-   vTaskDelay(10000 / portTICK_RATE_MS);
-
-   #ifdef ALLOW_USE_PRINTF
-   printf("Address of upgrade_firmware function: 0x%x\n", upgrade_firmware);
-   #endif
-   upgrade_firmware();
-
-   vTaskDelete(NULL);
+   for (;;) {
+      vTaskDelay(1000 / portTICK_RATE_MS);
+   }
 }
 
 void beep_task() {
@@ -907,7 +912,7 @@ void stop_ignoring_alarms_timer_callback() {
 }
 
 void read_pin_state_timer_callback(void *arg) {
-   unsigned int status = (unsigned int) arg;
+   /*unsigned int status = (unsigned int) arg;
    gpio_pin_intr_state_set(MOTION_DETECTOR_INPUT_PIN_ID, GPIO_PIN_INTR_NEGEDGE);
 
    if (status == MOTION_DETECTOR_INPUT_PIN &&
@@ -920,7 +925,7 @@ void read_pin_state_timer_callback(void *arg) {
       os_timer_arm(&ignore_alarms_timer_g, IGNORE_ALARMS_TIMEOUT_SEC * 1000, 0);
 
       xTaskCreate(send_alarm_request_task, "send_alarm_request_task", 256, NULL, 2, NULL);
-   }
+   }*/
 }
 
 void pins_interrupt_handler() {
@@ -928,14 +933,14 @@ void pins_interrupt_handler() {
    //clear interrupt status
    GPIO_REG_WRITE(GPIO_STATUS_W1TC_ADDRESS, status);
 
-   gpio_pin_intr_state_set(MOTION_DETECTOR_INPUT_PIN_ID, GPIO_PIN_INTR_DISABLE);
+   //gpio_pin_intr_state_set(MOTION_DETECTOR_INPUT_PIN_ID, GPIO_PIN_INTR_DISABLE);
 
    os_timer_disarm(&pins_state_timer_g);
    os_timer_setfn(&pins_state_timer_g, (os_timer_func_t *) read_pin_state_timer_callback, (void *) status);
    os_timer_arm(&pins_state_timer_g, 500, 0);
 }
 
-pins_config() {
+void pins_config() {
    GPIO_ConfigTypeDef output_pins;
    output_pins.GPIO_Mode = GPIO_Mode_Output;
    output_pins.GPIO_Pin = AP_CONNECTION_STATUS_LED_PIN | SERVER_AVAILABILITY_STATUS_LED_PIN | BUZZER_PIN | MOTION_SENSOR_ENABLE_PIN;
@@ -945,31 +950,96 @@ pins_config() {
    pin_output_reset(MOTION_SENSOR_ENABLE_PIN);
    gpio_config(&output_pins);
 
-   GPIO_ConfigTypeDef input_pins;
-   input_pins.GPIO_Mode = GPIO_Mode_Input;
-   input_pins.GPIO_Pin = MOTION_DETECTOR_INPUT_PIN;
-   input_pins.GPIO_Pullup = GPIO_PullUp_EN;
-   gpio_pin_intr_state_set(MOTION_DETECTOR_INPUT_PIN_ID, GPIO_PIN_INTR_NEGEDGE);
-   gpio_config(&input_pins);
-
    gpio_intr_handler_register(pins_interrupt_handler, NULL);
    enable_pins_interrupt();
 }
 
+void uart_config() {
+   UART_WaitTxFifoEmpty(UART0);
+
+   UART_ConfigTypeDef uart_config;
+   uart_config.baud_rate         = 115200;
+   uart_config.data_bits         = UART_WordLength_8b;
+   uart_config.parity            = USART_Parity_None;
+   uart_config.stop_bits         = USART_StopBits_1;
+   uart_config.flow_ctrl         = USART_HardwareFlowControl_None;
+   uart_config.UART_RxFlowThresh = 120;
+   uart_config.UART_InverseMask  = UART_None_Inverse;
+   UART_ParamConfig(UART0, &uart_config);
+
+   UART_IntrConfTypeDef uart_intr;
+   uart_intr.UART_IntrEnMask = UART_RXFIFO_TOUT_INT_ENA | UART_FRM_ERR_INT_ENA | UART_RXFIFO_FULL_INT_ENA;
+   uart_intr.UART_RX_FifoFullIntrThresh = 30;
+   uart_intr.UART_RX_TimeOutIntrThresh = 2;
+   uart_intr.UART_TX_FifoEmptyIntrThresh = 20;
+   UART_IntrConfig(UART0, &uart_intr);
+
+   UART_SetPrintPort(UART0);
+   UART_intr_handler_register(uart_rx_intr_handler, NULL);
+   ETS_UART_INTR_ENABLE();
+}
+
+void spi_slave_received_callback() {
+   printf("SPI received. Time: %d\n", milliseconds_g);
+}
+
+void uart_rx_intr_handler(void *params) {
+   unsigned char RcvChar;
+   uint8 fifo_len = 0;
+   uint8 buf_idx = 0;
+   unsigned int uart_intr_status = READ_PERI_REG(UART_INT_ST(UART0));
+
+   while (uart_intr_status != 0x0) {
+      if (UART_FRM_ERR_INT_ST == (uart_intr_status & UART_FRM_ERR_INT_ST)) {
+         printf("FRM_ERR\n");
+         WRITE_PERI_REG(UART_INT_CLR(UART0), UART_FRM_ERR_INT_CLR);
+      } else if (UART_RXFIFO_FULL_INT_ST == (uart_intr_status & UART_RXFIFO_FULL_INT_ST)) {
+         printf("full\n");
+         fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
+         buf_idx = 0;
+
+         while (buf_idx < fifo_len) {
+            RcvChar = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
+            printf("Received character: %c\n", RcvChar);
+            buf_idx++;
+         }
+
+         WRITE_PERI_REG(UART_INT_CLR(UART0), UART_RXFIFO_FULL_INT_CLR);
+      } else if (UART_RXFIFO_TOUT_INT_ST == (uart_intr_status & UART_RXFIFO_TOUT_INT_ST)) {
+         printf("tout\n");
+         fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
+         buf_idx = 0;
+
+         while (buf_idx < fifo_len) {
+            RcvChar = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
+            printf("Received character: %c\n", RcvChar);
+            buf_idx++;
+         }
+
+         WRITE_PERI_REG(UART_INT_CLR(UART0), UART_RXFIFO_TOUT_INT_CLR);
+      } else {
+         //skip
+      }
+
+      uart_intr_status = READ_PERI_REG(UART_INT_ST(UART0));
+   }
+}
+
 void user_init(void) {
-   uart_init_new();
-   UART_SetBaudrate(UART0, 115200);
+   vTaskDelay(5000 / portTICK_RATE_MS);
 
    #ifdef ALLOW_USE_PRINTF
    printf("\nSoftware is running from: %s\n", system_upgrade_userbin_check() ? "user2.bin" : "user1.bin");
    #endif
 
    pins_config();
+   uart_config();
+
    wifi_set_event_handler_cb(wifi_event_handler_callback);
    set_default_wi_fi_settings();
    espconn_init();
 
-   xTaskCreate(autoconnect_task, "autoconnect_task", 256, NULL, 1, NULL);
+   /*xTaskCreate(autoconnect_task, "autoconnect_task", 256, NULL, 1, NULL);
    xTaskCreate(scan_access_point_task, "scan_access_point_task", 256, NULL, 1, NULL);
 
    vSemaphoreCreateBinary(status_request_semaphore_g);
@@ -980,10 +1050,11 @@ void user_init(void) {
 
    #ifdef ALLOW_USE_PRINTF
    start_100millisecons_counter();
-   #endif
+   #endif*/
 
    /*vSemaphoreCreateBinary(long_polling_request_semaphore_g);
    xSemaphoreGive(long_polling_request_semaphore_g);
    xTaskCreate(send_long_polling_requests_task, "send_long_polling_requests_task", 384, NULL, 1, NULL);*/
-   //xTaskCreate(testing_task, "testing_task", 256, NULL, 1, NULL);
+   start_100millisecons_counter();
+   xTaskCreate(testing_task, "testing_task", 256, NULL, 1, NULL);
 }

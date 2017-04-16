@@ -6,10 +6,8 @@
 
 #define AP_CONNECTION_STATUS_LED_PIN         GPIO_Pin_5
 #define SERVER_AVAILABILITY_STATUS_LED_PIN   GPIO_Pin_4
-#define MOTION_DETECTOR_INPUT_PIN_ID         14
-#define MOTION_DETECTOR_INPUT_PIN            BIT(MOTION_DETECTOR_INPUT_PIN_ID)
 #define BUZZER_PIN                           GPIO_Pin_12
-#define MOTION_SENSOR_ENABLE_PIN             GPIO_Pin_13
+#define MOTION_SENSOR_ENABLE_PIN             GPIO_Pin_2
 
 #ifndef true // needed only for Eclipse
    typedef unsigned char bool;
@@ -90,4 +88,6 @@ void upgrade_firmware();
 void establish_connection(struct espconn *connection);
 void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphores_to_give[]);
 void pins_interrupt_handler();
+void uart_rx_intr_handler(void *params);
+void uart_config();
 #endif

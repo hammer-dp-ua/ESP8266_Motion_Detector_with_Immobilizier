@@ -37,8 +37,8 @@ cp %BIN_PATH_WIN%\upgrade\user2.1024.new.2.bin %FOTA_PATH%\user2.bin
 rem set out_file=%~dp0.output\eagle\debug\image\eagle.app.v6.out
 
 rem if EXIST %out_file% (
-rem    echo %out_file% was created
-rem    xtensa-lx106-elf-objdump -dgl %out_file% > %~dp0\disassembled.txt
+rem   echo %out_file% was created
+rem   xtensa-lx106-elf-objdump -dgl %out_file% > %~dp0\disassembled.txt
 rem )
 
 :end
