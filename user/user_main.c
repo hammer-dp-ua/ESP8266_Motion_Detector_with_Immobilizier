@@ -38,6 +38,8 @@ unsigned char responses_index;
 char *responses[10];
 unsigned int general_flags;
 
+char uart_rx_buffer_g[UART_RX_BUFFER_SIZE];
+
 xSemaphoreHandle status_request_semaphore_g;
 xSemaphoreHandle long_polling_request_semaphore_g;
 xSemaphoreHandle requests_mutex_g;
@@ -515,7 +517,7 @@ void upgrade_firmware() {
    printf("\nUpdating firmware... Time: %u\n", milliseconds_g);
    #endif
 
-   pin_output_set(MOTION_SENSOR_ENABLE_PIN);
+   turn_motion_sensors_off();
 
    xTaskCreate(blink_leds_while_updating_task, "blink_leds_while_updating_task", 256, NULL, 1, NULL);
 
@@ -848,7 +850,7 @@ void wifi_event_handler_callback(System_Event_t *event) {
    switch (event->event_id) {
       case EVENT_STAMODE_CONNECTED:
          pin_output_set(AP_CONNECTION_STATUS_LED_PIN);
-         pin_output_set(MOTION_SENSOR_ENABLE_PIN);
+         turn_motion_sensors_on();
          break;
       case EVENT_STAMODE_DISCONNECTED:
          pin_output_reset(AP_CONNECTION_STATUS_LED_PIN);
@@ -912,8 +914,8 @@ void stop_ignoring_alarms_timer_callback() {
 }
 
 void read_pin_state_timer_callback(void *arg) {
-   /*unsigned int status = (unsigned int) arg;
-   gpio_pin_intr_state_set(MOTION_DETECTOR_INPUT_PIN_ID, GPIO_PIN_INTR_NEGEDGE);
+   unsigned int status = (unsigned int) arg;
+   /*gpio_pin_intr_state_set(MOTION_DETECTOR_INPUT_PIN_ID, GPIO_PIN_INTR_NEGEDGE);
 
    if (status == MOTION_DETECTOR_INPUT_PIN &&
          !read_input_pin_state(MOTION_DETECTOR_INPUT_PIN) &&
@@ -943,11 +945,12 @@ void pins_interrupt_handler() {
 void pins_config() {
    GPIO_ConfigTypeDef output_pins;
    output_pins.GPIO_Mode = GPIO_Mode_Output;
-   output_pins.GPIO_Pin = AP_CONNECTION_STATUS_LED_PIN | SERVER_AVAILABILITY_STATUS_LED_PIN | BUZZER_PIN | MOTION_SENSOR_ENABLE_PIN;
+   output_pins.GPIO_Pin = AP_CONNECTION_STATUS_LED_PIN | SERVER_AVAILABILITY_STATUS_LED_PIN | BUZZER_PIN |
+         MOTION_SENSOR_1_ENABLE_PIN | MOTION_SENSOR_2_ENABLE_PIN | MOTION_SENSOR_3_ENABLE_PIN;
    pin_output_reset(AP_CONNECTION_STATUS_LED_PIN);
    pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
    pin_output_reset(BUZZER_PIN);
-   pin_output_reset(MOTION_SENSOR_ENABLE_PIN);
+
    gpio_config(&output_pins);
 
    gpio_intr_handler_register(pins_interrupt_handler, NULL);
@@ -979,40 +982,40 @@ void uart_config() {
    ETS_UART_INTR_ENABLE();
 }
 
-void spi_slave_received_callback() {
-   printf("SPI received. Time: %d\n", milliseconds_g);
-}
-
 void uart_rx_intr_handler(void *params) {
-   unsigned char RcvChar;
-   uint8 fifo_len = 0;
-   uint8 buf_idx = 0;
+   char received_character;
+
    unsigned int uart_intr_status = READ_PERI_REG(UART_INT_ST(UART0));
 
    while (uart_intr_status != 0x0) {
       if (UART_FRM_ERR_INT_ST == (uart_intr_status & UART_FRM_ERR_INT_ST)) {
-         printf("FRM_ERR\n");
          WRITE_PERI_REG(UART_INT_CLR(UART0), UART_FRM_ERR_INT_CLR);
       } else if (UART_RXFIFO_FULL_INT_ST == (uart_intr_status & UART_RXFIFO_FULL_INT_ST)) {
-         printf("full\n");
-         fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
-         buf_idx = 0;
+         unsigned char buf_idx = 0;
+         unsigned char fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
 
          while (buf_idx < fifo_len) {
-            RcvChar = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
-            printf("Received character: %c\n", RcvChar);
+            received_character = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
             buf_idx++;
          }
 
          WRITE_PERI_REG(UART_INT_CLR(UART0), UART_RXFIFO_FULL_INT_CLR);
       } else if (UART_RXFIFO_TOUT_INT_ST == (uart_intr_status & UART_RXFIFO_TOUT_INT_ST)) {
-         printf("tout\n");
-         fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
-         buf_idx = 0;
+         unsigned char buf_idx = 0;
+         unsigned char fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
 
          while (buf_idx < fifo_len) {
-            RcvChar = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
-            printf("Received character: %c\n", RcvChar);
+            received_character = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
+            uart_rx_buffer_g[buf_idx] = received_character;
+            buf_idx++;
+
+            if (buf_idx >= UART_RX_BUFFER_SIZE) {
+               buf_idx = 0;
+            }
+         }
+
+         while (buf_idx < UART_RX_BUFFER_SIZE) {
+            uart_rx_buffer_g[buf_idx] = '\0';
             buf_idx++;
          }
 
@@ -1023,6 +1026,22 @@ void uart_rx_intr_handler(void *params) {
 
       uart_intr_status = READ_PERI_REG(UART_INT_ST(UART0));
    }
+}
+
+void turn_motion_sensors_on() {
+   pin_output_reset(MOTION_SENSOR_1_ENABLE_PIN);
+   pin_output_reset(MOTION_SENSOR_2_ENABLE_PIN);
+   pin_output_reset(MOTION_SENSOR_3_ENABLE_PIN);
+}
+
+void turn_motion_sensors_off() {
+   pin_output_set(MOTION_SENSOR_1_ENABLE_PIN);
+   pin_output_set(MOTION_SENSOR_2_ENABLE_PIN);
+   pin_output_set(MOTION_SENSOR_3_ENABLE_PIN);
+}
+
+bool are_motion_sensors_turned_on() {
+   return read_output_pin_state(MOTION_SENSOR_1_ENABLE_PIN) && read_output_pin_state(MOTION_SENSOR_2_ENABLE_PIN) && read_output_pin_state(MOTION_SENSOR_3_ENABLE_PIN);
 }
 
 void user_init(void) {
