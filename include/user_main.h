@@ -60,6 +60,14 @@ char FIRMWARE_UPDATE_GET_REQUEST[] ICACHE_RODATA_ATTR =
       "Host: <2>\r\n"
       "User-Agent: ESP8266\r\n"
       "Connection: close\r\n\r\n";
+char MOTION_SENSOR_1_PIN[] ICACHE_RODATA_ATTR = "MOTION_SENSOR_1";
+char MOTION_SENSOR_2_PIN[] ICACHE_RODATA_ATTR = "MOTION_SENSOR_2";
+char MOTION_SENSOR_3_PIN[] ICACHE_RODATA_ATTR = "MOTION_SENSOR_3";
+char IMMOBILIZER_LED_PIN[] ICACHE_RODATA_ATTR = "IMMOBILIZER_LED";
+char PIR_LED_1_PIN[] ICACHE_RODATA_ATTR = "PIR_LED_1";
+char MW_LED_1_PIN[] ICACHE_RODATA_ATTR = "MW_LED_1";
+char PIR_LED_3_PIN[] ICACHE_RODATA_ATTR = "PIR_LED_3";
+char MW_LED_3_PIN[] ICACHE_RODATA_ATTR = "MW_LED_3";
 
 struct connection_user_data {
    bool response_received;
@@ -97,4 +105,5 @@ void uart_config();
 void turn_motion_sensors_on();
 void turn_motion_sensors_off();
 bool are_motion_sensors_turned_on();
+void input_pins_analyzer_task(void *pvParameters);
 #endif

@@ -38,8 +38,6 @@ unsigned char responses_index;
 char *responses[10];
 unsigned int general_flags;
 
-char uart_rx_buffer_g[UART_RX_BUFFER_SIZE];
-
 xSemaphoreHandle status_request_semaphore_g;
 xSemaphoreHandle long_polling_request_semaphore_g;
 xSemaphoreHandle requests_mutex_g;
@@ -440,6 +438,68 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
          xSemaphoreGive(semaphore_to_give);
       }
    }
+}
+
+bool compare_pins_names(char *activated_pin, char *rom_pin_name) {
+   char *comparable_pin = get_string_from_rom(rom_pin_name);
+   bool names_matched = strcmp(activated_pin, comparable_pin) == 0;
+
+   free(comparable_pin);
+   return names_matched;
+}
+
+void input_pins_analyzer_task(void *pvParameters) {
+   char *activated_pin_with_prefix = pvParameters;
+   char *prefix = "pin:";
+   unsigned char prefix_length = strnlen(prefix, 0xFF);
+   char *found_pin_prefix = strstr(activated_pin_with_prefix, prefix);
+
+   if (found_pin_prefix == NULL) {
+      #ifdef ALLOW_USE_PRINTF
+      printf("pin prefix is not found\n");
+      #endif
+      free(activated_pin_with_prefix);
+      vTaskDelete(NULL);
+   }
+
+   unsigned char pin_name_length = 0;
+   while (*(activated_pin_with_prefix + prefix_length + pin_name_length) != '\0') {
+      pin_name_length++;
+   }
+
+   char *activated_pin = malloc(pin_name_length);
+   unsigned char i = 0;
+
+   for (i = 0; i < pin_name_length; i++) {
+      *(activated_pin + i) = *(activated_pin_with_prefix + prefix_length + i);
+   }
+   *(activated_pin + i) = '\0';
+   free(activated_pin_with_prefix);
+
+   #ifdef ALLOW_USE_PRINTF
+   printf("pin without prefix: %s\n", activated_pin);
+   #endif
+
+   if (compare_pins_names(activated_pin, MOTION_SENSOR_1_PIN)) {
+      printf("It's %s pin\n", activated_pin);
+   } else if (compare_pins_names(activated_pin, PIR_LED_1_PIN)) {
+      printf("It's %s pin\n", activated_pin);
+   } else if (compare_pins_names(activated_pin, MW_LED_1_PIN)) {
+      printf("It's %s pin\n", activated_pin);
+   } else if (compare_pins_names(activated_pin, MOTION_SENSOR_3_PIN)) {
+      printf("It's %s pin\n", activated_pin);
+   } else if (compare_pins_names(activated_pin, PIR_LED_3_PIN)) {
+      printf("It's %s pin\n", activated_pin);
+   } else if (compare_pins_names(activated_pin, MW_LED_3_PIN)) {
+      printf("It's %s pin\n", activated_pin);
+   } else if (compare_pins_names(activated_pin, MOTION_SENSOR_2_PIN)) {
+      printf("It's %s pin\n", activated_pin);
+   } else if (compare_pins_names(activated_pin, IMMOBILIZER_LED_PIN)) {
+      printf("It's %s pin\n", activated_pin);
+   }
+
+   free(activated_pin);
+   vTaskDelete(NULL);
 }
 
 void timeout_request_supervisor_task(void *pvParameters) {
@@ -1003,21 +1063,23 @@ void uart_rx_intr_handler(void *params) {
       } else if (UART_RXFIFO_TOUT_INT_ST == (uart_intr_status & UART_RXFIFO_TOUT_INT_ST)) {
          unsigned char buf_idx = 0;
          unsigned char fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
+         char *received_data = malloc(fifo_len + 1);
 
          while (buf_idx < fifo_len) {
             received_character = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
-            uart_rx_buffer_g[buf_idx] = received_character;
+            *(received_data + buf_idx) = received_character;
             buf_idx++;
 
             if (buf_idx >= UART_RX_BUFFER_SIZE) {
                buf_idx = 0;
             }
          }
+         *(received_data + fifo_len) = '\0';
 
-         while (buf_idx < UART_RX_BUFFER_SIZE) {
-            uart_rx_buffer_g[buf_idx] = '\0';
-            buf_idx++;
-         }
+         #ifdef ALLOW_USE_PRINTF
+         printf("Received pin info: %s\n", received_data);
+         #endif
+         xTaskCreate(input_pins_analyzer_task, "input_pins_analyzer_task", 256, received_data, 1, NULL);
 
          WRITE_PERI_REG(UART_INT_CLR(UART0), UART_RXFIFO_TOUT_INT_CLR);
       } else {
