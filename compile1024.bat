@@ -34,11 +34,11 @@ make clean
 make COMPILE= BOOT=new APP=2 SPI_SPEED=40 SPI_MODE=QIO SPI_SIZE_MAP=2
 cp %BIN_PATH_WIN%\upgrade\user2.1024.new.2.bin %FOTA_PATH%\user2.bin
 
-rem set out_file=%~dp0.output\eagle\debug\image\eagle.app.v6.out
+set out_file=%~dp0.output\eagle\debug\image\eagle.app.v6.out
 
-rem if EXIST %out_file% (
-rem   echo %out_file% was created
-rem   xtensa-lx106-elf-objdump -dgl %out_file% > %~dp0\disassembled.txt
-rem )
+if EXIST %out_file% (
+   echo %out_file% was created
+   xtensa-lx106-elf-objdump -dgl %out_file% > %~dp0\disassembled.txt
+)
 
 :end

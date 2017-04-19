@@ -22,14 +22,16 @@
 #define UPDATE_FIRMWARE_FLAG                       4
 #define REQUEST_ERROR_OCCURRED_FLAG                8
 #define IGNORE_ALARMS_FLAG                         16
+#define IGNORE_FALSE_ALARMS_FLAG                   32
 
-#define REQUEST_IDLE_TIME_ON_ERROR              (10000 / portTICK_RATE_MS) // 10 sec
-#define REQUEST_MAX_DURATION_TIME               (10000 / portTICK_RATE_MS) // 10 sec
-#define STATUS_REQUESTS_SEND_INTERVAL           (30000 / portTICK_RATE_MS) // 30 sec
-#define LONG_POLLING_REQUEST_IDLE_TIME_ON_ERROR (10000 / portTICK_RATE_MS) // 10 sec
+#define REQUEST_IDLE_TIME_ON_ERROR              (10 * 1000 / portTICK_RATE_MS) // 10 sec
+#define REQUEST_MAX_DURATION_TIME               (10 * 1000 / portTICK_RATE_MS) // 10 sec
+#define STATUS_REQUESTS_SEND_INTERVAL           (30 * 1000 / portTICK_RATE_MS) // 30 sec
+#define LONG_POLLING_REQUEST_IDLE_TIME_ON_ERROR (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define LONG_POLLING_REQUEST_MAX_DURATION_TIME  (5.5 * 60 * 1000 / portTICK_RATE_MS) // 5.5 mins
 
 #define IGNORE_ALARMS_TIMEOUT_SEC 30
+#define IGNORE_FALSE_ALARMS_TIMEOUT_SEC 5
 
 #define UART_RX_BUFFER_SIZE 30
 
@@ -49,11 +51,23 @@ char STATUS_INFO_REQUEST_PAYLOAD[] ICACHE_RODATA_ATTR =
       "\"errors\":\"<3>\","
       "\"buildTimestamp\":\"<4>\"}";
 char ALARM_GET_REQUEST[] ICACHE_RODATA_ATTR =
-      "GET /server/esp8266/testAlarm HTTP/1.1\r\n"
-      "Host: <1>\r\n"
+      "GET /server/esp8266/testAlarm?alarmSource=<1> HTTP/1.1\r\n"
+      "Host: <2>\r\n"
       "User-Agent: ESP8266\r\n"
       "Connection: close\r\n"
       "Accept: application/json\r\n\r\n";
+char FALSE_ALARM_GET_REQUEST[] ICACHE_RODATA_ATTR =
+      "GET /server/esp8266/falseAlarm?alarmSource=<1> HTTP/1.1\r\n"
+      "Host: <2>\r\n"
+      "User-Agent: ESP8266\r\n"
+      "Connection: close\r\n"
+      "Accept: application/json\r\n\r\n";
+char IMMOBILIZER_ACTIVATION_REQUEST[] ICACHE_RODATA_ATTR =
+      "GET /server/esp8266/immobilizerActivated HTTP/1.1\r\n"
+      "Host: <1>\r\n"
+      "User-Agent: ESP8266\r\n"
+      "Accept: application/json\r\n"
+      "Connection: close\r\n\r\n";
 char UPDATE_FIRMWARE[] ICACHE_RODATA_ATTR = "\"updateFirmware\":true";
 char FIRMWARE_UPDATE_GET_REQUEST[] ICACHE_RODATA_ATTR =
       "GET /esp8266_fota/<1> HTTP/1.1\r\n"
@@ -73,11 +87,23 @@ struct connection_user_data {
    bool response_received;
    char *request;
    char *response;
-   void (*execute_on_succeed)(struct espconn *connection);
-   void (*execute_on_error)(struct espconn *connection);
+   void (*execute_on_succeed) (struct espconn *connection);
+   void (*execute_on_error) (struct espconn *connection);
    xTaskHandle timeout_request_supervisor_task;
    xTaskHandle parent_task;
+   void *parent_task_params;
    portTickType request_max_duration_time;
+};
+
+typedef enum {
+   ALARM,
+   FALSE_ALARM,
+   IMMOBILIZER_ACTIVATION
+} GeneralRequestType;
+
+struct request_data {
+   char *alarm_source;
+   GeneralRequestType request_type;
 };
 
 void scan_access_point_task(void *pvParameters);
@@ -85,7 +111,7 @@ void send_long_polling_requests_task(void *pvParameters);
 void autoconnect_task(void *pvParameters);
 void activate_status_requests_task_task(void *pvParameters);
 void send_status_requests_task(void *pvParameters);
-void send_alarm_request_task(void *pvParameters);
+void send_general_request_task(void *pvParameters);
 void beep_task();
 void successfull_connected_tcp_handler_callback(void *arg);
 void successfull_disconnected_tcp_handler_callback();
@@ -106,4 +132,6 @@ void turn_motion_sensors_on();
 void turn_motion_sensors_off();
 bool are_motion_sensors_turned_on();
 void input_pins_analyzer_task(void *pvParameters);
+void stop_ignoring_alarms_timer_callback();
+void stop_ignoring_false_alarms_timer_callback();
 #endif

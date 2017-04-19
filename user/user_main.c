@@ -39,12 +39,11 @@ char *responses[10];
 unsigned int general_flags;
 
 xSemaphoreHandle status_request_semaphore_g;
-xSemaphoreHandle long_polling_request_semaphore_g;
 xSemaphoreHandle requests_mutex_g;
 xSemaphoreHandle buzzer_semaphore_g;
 
-os_timer_t pins_state_timer_g;
 os_timer_t ignore_alarms_timer_g;
+os_timer_t ignore_false_alarms_timer_g;
 
 /******************************************************************************
  * FunctionName : user_rf_cal_sector_set
@@ -267,21 +266,6 @@ void tcp_request_successfully_written_into_buffer_handler_callback() {
    //printf("Request written into buffer callback\n");
 }
 
-void long_polling_request_on_error_callback(struct espconn *connection) {
-   #ifdef ALLOW_USE_PRINTF
-   printf("long_polling_request_on_error_callback\n");
-   #endif
-
-   struct connection_user_data *user_data = connection->reserve;
-   char *request = user_data->request;
-
-   errors_counter_g++;
-   pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
-   set_flag(&general_flags, LONG_POLLING_REQUEST_ERROR_OCCURRED_FLAG);
-   xSemaphoreHandle semaphores_to_give[] = {long_polling_request_semaphore_g, NULL};
-   request_finish_action(connection, semaphores_to_give);
-}
-
 void status_request_on_error_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
    printf("status_request_on_error_callback. Time: %u\n", milliseconds_g);
@@ -297,9 +281,9 @@ void status_request_on_error_callback(struct espconn *connection) {
    request_finish_action(connection, semaphores_to_give);
 }
 
-void alarm_request_on_error_callback(struct espconn *connection) {
+void general_request_on_error_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
-   printf("alarm_request_on_error_callback. Time: %u\n", milliseconds_g);
+   printf("general_request_on_error_callback. Time: %u\n", milliseconds_g);
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
@@ -319,29 +303,6 @@ void check_for_update_firmware(char *response) {
       set_flag(&general_flags, UPDATE_FIRMWARE_FLAG);
    }
    free(update_firmware_json_element);
-}
-
-void long_polling_request_on_succeed_callback(struct espconn *connection) {
-   #ifdef ALLOW_USE_PRINTF
-   printf("long_polling_request_on_succeed_callback\n");
-   #endif
-
-   struct connection_user_data *user_data = connection->reserve;
-
-   if (!user_data->response_received) {
-      long_polling_request_on_error_callback(connection);
-      return;
-   }
-
-   check_for_update_firmware(user_data->response);
-
-   pin_output_set(SERVER_AVAILABILITY_STATUS_LED_PIN);
-   xSemaphoreHandle semaphores_to_give[] = {long_polling_request_semaphore_g, NULL};
-   request_finish_action(connection, semaphores_to_give);
-
-   if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
-      upgrade_firmware();
-   }
 }
 
 void status_request_on_succeed_callback(struct espconn *connection) {
@@ -369,9 +330,9 @@ void status_request_on_succeed_callback(struct espconn *connection) {
    }
 }
 
-void alarm_request_on_succeed_callback(struct espconn *connection) {
+void general_request_on_succeed_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
-   printf("alarm_request_on_succeed_callback. Time: %u\n", milliseconds_g);
+   printf("general_request_on_succeed_callback. Time: %u\n", milliseconds_g);
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
@@ -390,6 +351,12 @@ void alarm_request_on_succeed_callback(struct espconn *connection) {
       #ifdef ALLOW_USE_PRINTF
       printf("parent task is to be deleted...\n");
       #endif
+
+      struct request_data *request_data_params = user_data->parent_task_params;
+      if (request_data_params != NULL) {
+         free(request_data_params->alarm_source);
+         free(request_data_params);
+      }
 
       vTaskDelete(parent_task);
    }
@@ -423,7 +390,8 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
       #endif
    }
    free(user_data);
-   sint8 error_code = espconn_delete(connection);
+
+   char error_code = espconn_delete(connection);
    if (error_code != 0) {
       #ifdef ALLOW_USE_PRINTF
       printf("ERROR! Connection is still in progress\n");
@@ -480,25 +448,30 @@ void input_pins_analyzer_task(void *pvParameters) {
    printf("pin without prefix: %s\n", activated_pin);
    #endif
 
-   if (compare_pins_names(activated_pin, MOTION_SENSOR_1_PIN)) {
-      printf("It's %s pin\n", activated_pin);
-   } else if (compare_pins_names(activated_pin, PIR_LED_1_PIN)) {
-      printf("It's %s pin\n", activated_pin);
-   } else if (compare_pins_names(activated_pin, MW_LED_1_PIN)) {
-      printf("It's %s pin\n", activated_pin);
-   } else if (compare_pins_names(activated_pin, MOTION_SENSOR_3_PIN)) {
-      printf("It's %s pin\n", activated_pin);
-   } else if (compare_pins_names(activated_pin, PIR_LED_3_PIN)) {
-      printf("It's %s pin\n", activated_pin);
-   } else if (compare_pins_names(activated_pin, MW_LED_3_PIN)) {
-      printf("It's %s pin\n", activated_pin);
-   } else if (compare_pins_names(activated_pin, MOTION_SENSOR_2_PIN)) {
-      printf("It's %s pin\n", activated_pin);
+   struct request_data *alarm_data_param = (struct request_data *) zalloc(sizeof(struct request_data));
+   char *task_name = "send_general_request_task";
+
+   if (compare_pins_names(activated_pin, MOTION_SENSOR_1_PIN) || compare_pins_names(activated_pin, MOTION_SENSOR_2_PIN) ||
+         compare_pins_names(activated_pin, MOTION_SENSOR_3_PIN)) {
+      alarm_data_param->alarm_source = activated_pin;
+      alarm_data_param->request_type = ALARM;
+
+      xTaskCreate(send_general_request_task, task_name, 256, alarm_data_param, 2, NULL);
+   } else if (compare_pins_names(activated_pin, PIR_LED_1_PIN) || compare_pins_names(activated_pin, MW_LED_1_PIN) ||
+         compare_pins_names(activated_pin, PIR_LED_3_PIN) || compare_pins_names(activated_pin, MW_LED_3_PIN)) {
+      alarm_data_param->alarm_source = activated_pin;
+      alarm_data_param->request_type = FALSE_ALARM;
+
+      xTaskCreate(send_general_request_task, task_name, 256, alarm_data_param, 2, NULL);
    } else if (compare_pins_names(activated_pin, IMMOBILIZER_LED_PIN)) {
-      printf("It's %s pin\n", activated_pin);
+      alarm_data_param->request_type = IMMOBILIZER_ACTIVATION;
+
+      xTaskCreate(send_general_request_task, task_name, 256, alarm_data_param, 1, NULL);
+   } else {
+      free(activated_pin);
+      free(alarm_data_param);
    }
 
-   free(activated_pin);
    vTaskDelete(NULL);
 }
 
@@ -672,54 +645,6 @@ void establish_connection(struct espconn *connection) {
    }
 }
 
-void send_long_polling_requests_task(void *pvParameters) {
-   for (;;) {
-      if (read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN) &&
-            xSemaphoreTake(long_polling_request_semaphore_g, portMAX_DELAY) == pdTRUE &&
-            !read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
-         if (read_flag(general_flags, LONG_POLLING_REQUEST_ERROR_OCCURRED_FLAG)) {
-            reset_flag(&general_flags, LONG_POLLING_REQUEST_ERROR_OCCURRED_FLAG);
-
-            vTaskDelay(LONG_POLLING_REQUEST_IDLE_TIME_ON_ERROR);
-         }
-
-         struct espconn *connection = (struct espconn *) zalloc(sizeof(struct espconn));
-         struct connection_user_data *user_data = (struct connection_user_data *) zalloc(sizeof(struct connection_user_data));
-
-         user_data->response_received = false;
-         user_data->timeout_request_supervisor_task = NULL;
-         //user_data.request = request;
-         user_data->response = NULL;
-         user_data->execute_on_succeed = long_polling_request_on_succeed_callback;
-         user_data->execute_on_error = long_polling_request_on_error_callback;
-         user_data->request_max_duration_time = LONG_POLLING_REQUEST_MAX_DURATION_TIME;
-         connection->reserve = user_data;
-         connection->type = ESPCONN_TCP;
-         connection->state = ESPCONN_NONE;
-
-         // remote IP of TCP server
-         unsigned char tcp_server_ip[] = {SERVER_IP_ADDRESS_1, SERVER_IP_ADDRESS_2, SERVER_IP_ADDRESS_3, SERVER_IP_ADDRESS_4};
-
-         connection->proto.tcp = &user_tcp;
-         memcpy(&connection->proto.tcp->remote_ip, tcp_server_ip, 4);
-         connection->proto.tcp->remote_port = SERVER_PORT;
-         connection->proto.tcp->local_port = espconn_port(); // local port of ESP8266
-
-         espconn_regist_connectcb(connection, successfull_connected_tcp_handler_callback);
-         espconn_regist_disconcb(connection, successfull_disconnected_tcp_handler_callback);
-         espconn_regist_reconcb(connection, tcp_connection_error_handler_callback);
-         espconn_regist_sentcb(connection, tcp_request_successfully_sent_handler_callback);
-         espconn_regist_recvcb(connection, tcp_response_received_handler_callback);
-         //espconn_regist_write_finish(&connection, tcp_request_successfully_written_into_buffer_handler_callback);
-
-         establish_connection(connection);
-      } else if (read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN)) {
-         pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
-         vTaskDelay(1000 / portTICK_RATE_MS);
-      }
-   }
-}
-
 void activate_status_requests_task_task(void *pvParameters) {
    vTaskDelay(STATUS_REQUESTS_SEND_INTERVAL);
    xSemaphoreGive(status_request_semaphore_g);
@@ -827,22 +752,66 @@ void send_status_requests_task(void *pvParameters) {
    }
 }
 
-void send_alarm_request_task(void *pvParameters) {
+void send_general_request_task(void *pvParameters) {
    #ifdef ALLOW_USE_PRINTF
-   printf("send_alarm_request_task has been created. Time: %u\n", milliseconds_g);
+   printf("send_general_request_task has been created. Time: %u\n", milliseconds_g);
    #endif
 
+   struct request_data *request_data_param = pvParameters;
+
    if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
+      free(request_data_param->alarm_source);
+      free(request_data_param);
+
       vTaskDelete(NULL);
    }
 
-   //xTaskCreate(beep_task, "beep_task", 176, NULL, 1, NULL);
+   if (request_data_param->request_type == FALSE_ALARM) {
+      if (read_flag(general_flags, IGNORE_FALSE_ALARMS_FLAG)) {
+         // Alarm occurred before false alarm within interval
+         free(request_data_param->alarm_source);
+         free(request_data_param);
+
+         vTaskDelete(NULL);
+      } else {
+         vTaskDelay((IGNORE_FALSE_ALARMS_TIMEOUT_SEC * 1000 + 500) / portTICK_RATE_MS);
+
+         if (read_flag(general_flags, IGNORE_FALSE_ALARMS_FLAG)) {
+            // Alarm occurred after false alarm within interval
+            free(request_data_param->alarm_source);
+            free(request_data_param);
+
+            vTaskDelete(NULL);
+         }
+      }
+   } else if (request_data_param->request_type == ALARM) {
+      if (read_flag(general_flags, IGNORE_ALARMS_FLAG)) {
+         free(request_data_param->alarm_source);
+         free(request_data_param);
+
+         vTaskDelete(NULL);
+      }
+
+      set_flag(&general_flags, IGNORE_ALARMS_FLAG);
+      os_timer_disarm(&ignore_alarms_timer_g);
+      os_timer_setfn(&ignore_alarms_timer_g, (os_timer_func_t *) stop_ignoring_alarms_timer_callback, NULL);
+      os_timer_arm(&ignore_alarms_timer_g, IGNORE_ALARMS_TIMEOUT_SEC * 1000, 0);
+   } else if (request_data_param->request_type == IMMOBILIZER_ACTIVATION) {
+      //xTaskCreate(beep_task, "beep_task", 176, NULL, 1, NULL);
+   }
+
+   if (request_data_param->request_type != IMMOBILIZER_ACTIVATION) {
+      set_flag(&general_flags, IGNORE_FALSE_ALARMS_FLAG);
+      os_timer_disarm(&ignore_false_alarms_timer_g);
+      os_timer_setfn(&ignore_false_alarms_timer_g, (os_timer_func_t *) stop_ignoring_false_alarms_timer_callback, NULL);
+      os_timer_arm(&ignore_false_alarms_timer_g, IGNORE_FALSE_ALARMS_TIMEOUT_SEC * 1000, 0);
+   }
 
    for (;;) {
       xSemaphoreTake(requests_mutex_g, portMAX_DELAY);
 
       #ifdef ALLOW_USE_PRINTF
-      printf("send_alarm_request_task started. Time: %u\n", milliseconds_g);
+      printf("send_general_request_task started. Time: %u\n", milliseconds_g);
       #endif
 
       if (!read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN)) {
@@ -860,10 +829,22 @@ void send_alarm_request_task(void *pvParameters) {
          vTaskDelay(REQUEST_IDLE_TIME_ON_ERROR);
       }
 
-      char *request_template = get_string_from_rom(ALARM_GET_REQUEST);
       char *server_ip_address = get_string_from_rom(SERVER_IP_ADDRESS);
-      char *request_template_parameters[] = {server_ip_address, NULL};
-      char *request = set_string_parameters(request_template, request_template_parameters);
+      char *request_template;
+      char *request;
+      if (request_data_param->request_type == ALARM) {
+         request_template = get_string_from_rom(ALARM_GET_REQUEST);
+         char *request_template_parameters[] = {request_data_param->alarm_source, server_ip_address, NULL};
+         request = set_string_parameters(request_template, request_template_parameters);
+      } else if (request_data_param->request_type == FALSE_ALARM) {
+         request_template = get_string_from_rom(FALSE_ALARM_GET_REQUEST);
+         char *request_template_parameters[] = {request_data_param->alarm_source, server_ip_address, NULL};
+         request = set_string_parameters(request_template, request_template_parameters);
+      } else if (request_data_param->request_type == IMMOBILIZER_ACTIVATION) {
+         request_template = get_string_from_rom(IMMOBILIZER_ACTIVATION_REQUEST);
+         char *request_template_parameters[] = {server_ip_address, NULL};
+         request = set_string_parameters(request_template, request_template_parameters);
+      }
 
       free(request_template);
       free(server_ip_address);
@@ -879,9 +860,10 @@ void send_alarm_request_task(void *pvParameters) {
       user_data->timeout_request_supervisor_task = NULL;
       user_data->request = request;
       user_data->response = NULL;
-      user_data->execute_on_succeed = alarm_request_on_succeed_callback;
-      user_data->execute_on_error = alarm_request_on_error_callback;
+      user_data->execute_on_succeed = general_request_on_succeed_callback;
+      user_data->execute_on_error = general_request_on_error_callback;
       user_data->parent_task = xTaskGetCurrentTaskHandle();
+      user_data->parent_task_params = pvParameters;
       user_data->request_max_duration_time = REQUEST_MAX_DURATION_TIME;
       connection->reserve = user_data;
       connection->type = ESPCONN_TCP;
@@ -973,33 +955,8 @@ void stop_ignoring_alarms_timer_callback() {
    reset_flag(&general_flags, IGNORE_ALARMS_FLAG);
 }
 
-void read_pin_state_timer_callback(void *arg) {
-   unsigned int status = (unsigned int) arg;
-   /*gpio_pin_intr_state_set(MOTION_DETECTOR_INPUT_PIN_ID, GPIO_PIN_INTR_NEGEDGE);
-
-   if (status == MOTION_DETECTOR_INPUT_PIN &&
-         !read_input_pin_state(MOTION_DETECTOR_INPUT_PIN) &&
-         !read_flag(general_flags, IGNORE_ALARMS_FLAG) &&
-         read_output_pin_state(MOTION_SENSOR_ENABLE_PIN)) {
-      set_flag(&general_flags, IGNORE_ALARMS_FLAG);
-      os_timer_disarm(&ignore_alarms_timer_g);
-      os_timer_setfn(&ignore_alarms_timer_g, (os_timer_func_t *) stop_ignoring_alarms_timer_callback, NULL);
-      os_timer_arm(&ignore_alarms_timer_g, IGNORE_ALARMS_TIMEOUT_SEC * 1000, 0);
-
-      xTaskCreate(send_alarm_request_task, "send_alarm_request_task", 256, NULL, 2, NULL);
-   }*/
-}
-
-void pins_interrupt_handler() {
-   unsigned int status = GPIO_REG_READ(GPIO_STATUS_ADDRESS);
-   //clear interrupt status
-   GPIO_REG_WRITE(GPIO_STATUS_W1TC_ADDRESS, status);
-
-   //gpio_pin_intr_state_set(MOTION_DETECTOR_INPUT_PIN_ID, GPIO_PIN_INTR_DISABLE);
-
-   os_timer_disarm(&pins_state_timer_g);
-   os_timer_setfn(&pins_state_timer_g, (os_timer_func_t *) read_pin_state_timer_callback, (void *) status);
-   os_timer_arm(&pins_state_timer_g, 500, 0);
+void stop_ignoring_false_alarms_timer_callback() {
+   reset_flag(&general_flags, IGNORE_FALSE_ALARMS_FLAG);
 }
 
 void pins_config() {
@@ -1012,9 +969,6 @@ void pins_config() {
    pin_output_reset(BUZZER_PIN);
 
    gpio_config(&output_pins);
-
-   gpio_intr_handler_register(pins_interrupt_handler, NULL);
-   enable_pins_interrupt();
 }
 
 void uart_config() {
@@ -1109,18 +1063,18 @@ bool are_motion_sensors_turned_on() {
 void user_init(void) {
    vTaskDelay(5000 / portTICK_RATE_MS);
 
+   pins_config();
+   uart_config();
+
    #ifdef ALLOW_USE_PRINTF
    printf("\nSoftware is running from: %s\n", system_upgrade_userbin_check() ? "user2.bin" : "user1.bin");
    #endif
-
-   pins_config();
-   uart_config();
 
    wifi_set_event_handler_cb(wifi_event_handler_callback);
    set_default_wi_fi_settings();
    espconn_init();
 
-   /*xTaskCreate(autoconnect_task, "autoconnect_task", 256, NULL, 1, NULL);
+   xTaskCreate(autoconnect_task, "autoconnect_task", 256, NULL, 1, NULL);
    xTaskCreate(scan_access_point_task, "scan_access_point_task", 256, NULL, 1, NULL);
 
    vSemaphoreCreateBinary(status_request_semaphore_g);
@@ -1131,11 +1085,5 @@ void user_init(void) {
 
    #ifdef ALLOW_USE_PRINTF
    start_100millisecons_counter();
-   #endif*/
-
-   /*vSemaphoreCreateBinary(long_polling_request_semaphore_g);
-   xSemaphoreGive(long_polling_request_semaphore_g);
-   xTaskCreate(send_long_polling_requests_task, "send_long_polling_requests_task", 384, NULL, 1, NULL);*/
-   start_100millisecons_counter();
-   xTaskCreate(testing_task, "testing_task", 256, NULL, 1, NULL);
+   #endif
 }
