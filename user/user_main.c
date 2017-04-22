@@ -38,6 +38,8 @@ unsigned char responses_index;
 char *responses[10];
 unsigned int general_flags;
 
+struct motion_sensor alarm_sources_g[ALARM_SOURCES_LENGTH];
+
 xSemaphoreHandle status_request_semaphore_g;
 xSemaphoreHandle requests_mutex_g;
 xSemaphoreHandle buzzer_semaphore_g;
@@ -165,7 +167,7 @@ void beep_task() {
 
    vTaskDelay(500 / portTICK_RATE_MS);
 
-   if (xSemaphoreTake(buzzer_semaphore_g, IGNORE_ALARMS_TIMEOUT_SEC * 1000 / portTICK_RATE_MS) == pdPASS) {
+   if (xSemaphoreTake(buzzer_semaphore_g, REQUEST_MAX_DURATION_TIME) == pdPASS) {
       pin_output_set(BUZZER_PIN);
       vTaskDelay(100 / portTICK_RATE_MS);
       pin_output_reset(BUZZER_PIN);
@@ -352,12 +354,6 @@ void general_request_on_succeed_callback(struct espconn *connection) {
       printf("parent task is to be deleted...\n");
       #endif
 
-      struct request_data *request_data_params = user_data->parent_task_params;
-      if (request_data_params != NULL) {
-         free(request_data_params->alarm_source);
-         free(request_data_params);
-      }
-
       vTaskDelete(parent_task);
    }
 
@@ -448,28 +444,41 @@ void input_pins_analyzer_task(void *pvParameters) {
    printf("pin without prefix: %s\n", activated_pin);
    #endif
 
-   struct request_data *alarm_data_param = (struct request_data *) zalloc(sizeof(struct request_data));
-   char *task_name = "send_general_request_task";
+   struct request_data request_data_param;
+   struct motion_sensor ms;
 
-   if (compare_pins_names(activated_pin, MOTION_SENSOR_1_PIN) || compare_pins_names(activated_pin, MOTION_SENSOR_2_PIN) ||
-         compare_pins_names(activated_pin, MOTION_SENSOR_3_PIN)) {
-      alarm_data_param->alarm_source = activated_pin;
-      alarm_data_param->request_type = ALARM;
+   request_data_param.ms = ms;
 
-      xTaskCreate(send_general_request_task, task_name, 256, alarm_data_param, 2, NULL);
-   } else if (compare_pins_names(activated_pin, PIR_LED_1_PIN) || compare_pins_names(activated_pin, MW_LED_1_PIN) ||
-         compare_pins_names(activated_pin, PIR_LED_3_PIN) || compare_pins_names(activated_pin, MW_LED_3_PIN)) {
-      alarm_data_param->alarm_source = activated_pin;
-      alarm_data_param->request_type = FALSE_ALARM;
-
-      xTaskCreate(send_general_request_task, task_name, 256, alarm_data_param, 2, NULL);
+   if (compare_pins_names(activated_pin, MOTION_SENSOR_1_PIN)) {
+      request_data_param.request_type = ALARM;
+      ms.unit = MOTION_SENSOR_1;
+      ms.alarm_source = activated_pin;
+      send_general_request(request_data_param, 2);
+   } else if (compare_pins_names(activated_pin, MOTION_SENSOR_2_PIN)) {
+      request_data_param.request_type = ALARM;
+      ms.unit = MOTION_SENSOR_2;
+      ms.alarm_source = activated_pin;
+      send_general_request(request_data_param, 2);
+   } else if (compare_pins_names(activated_pin, MOTION_SENSOR_3_PIN)) {
+      request_data_param.request_type = ALARM;
+      ms.unit = MOTION_SENSOR_3;
+      ms.alarm_source = activated_pin;
+      send_general_request(request_data_param, 2);
+   } else if (compare_pins_names(activated_pin, PIR_LED_1_PIN) || compare_pins_names(activated_pin, MW_LED_1_PIN)) {
+      request_data_param.request_type = FALSE_ALARM;
+      ms.unit = MOTION_SENSOR_1;
+      ms.alarm_source = activated_pin;
+      send_general_request(request_data_param, 1);
+   } else if (compare_pins_names(activated_pin, PIR_LED_3_PIN) || compare_pins_names(activated_pin, MW_LED_3_PIN)) {
+      request_data_param.request_type = FALSE_ALARM;
+      ms.unit = MOTION_SENSOR_3;
+      ms.alarm_source = activated_pin;
+      send_general_request(request_data_param, 1);
    } else if (compare_pins_names(activated_pin, IMMOBILIZER_LED_PIN)) {
-      alarm_data_param->request_type = IMMOBILIZER_ACTIVATION;
-
-      xTaskCreate(send_general_request_task, task_name, 256, alarm_data_param, 1, NULL);
+      request_data_param.request_type = IMMOBILIZER_ACTIVATION;
+      send_general_request(request_data_param, 1);
    } else {
       free(activated_pin);
-      free(alarm_data_param);
    }
 
    vTaskDelete(NULL);
@@ -551,6 +560,7 @@ void upgrade_firmware() {
    #endif
 
    turn_motion_sensors_off();
+   ETS_UART_INTR_DISABLE(); // To not receive data from UART RX
 
    xTaskCreate(blink_leds_while_updating_task, "blink_leds_while_updating_task", 256, NULL, 1, NULL);
 
@@ -752,6 +762,91 @@ void send_status_requests_task(void *pvParameters) {
    }
 }
 
+bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request_type) {
+   if (ms == NULL) {
+      return false;
+   }
+
+   unsigned char i;
+
+   if (request_type == FALSE_ALARM) {
+      for (i = 0; i < ALARM_SOURCES_LENGTH; i++) {
+         struct motion_sensor found_motion_sensor = alarm_sources_g[i];
+
+         if (found_motion_sensor.unit == ms->unit) {
+            return true;
+         }
+     }
+   } else if (request_type == ALARM) {
+      for (i = 0; i < ALARM_SOURCES_LENGTH; i++) {
+         struct motion_sensor found_motion_sensor = alarm_sources_g[i];
+
+         if (found_motion_sensor.unit == ms->unit && strcmp(found_motion_sensor.alarm_source, ms->alarm_source) == 0) {
+            return true;
+         }
+     }
+   }
+   return false;
+}
+
+void ignore_alarm(struct motion_sensor ms) {
+   unsigned char i;
+
+   for (i = 0; i < ALARM_SOURCES_LENGTH; i++) {
+      if (alarm_sources_g[i] == NULL) {
+         alarm_sources_g[i] = ms;
+         break;
+      }
+   }
+}
+
+void stop_ignoring_alarm(struct motion_sensor *ms) {
+   if (ms == NULL) {
+      return;
+   }
+
+   unsigned char i;
+   for (i = 0; i < ALARM_SOURCES_LENGTH; i++) {
+      struct motion_sensor found_motion_sensor = alarm_sources_g[i];
+
+      if (found_motion_sensor.unit == ms->unit && strcmp(found_motion_sensor.alarm_source, ms->alarm_source) == 0) {
+         free(found_motion_sensor.alarm_source);
+         alarm_sources_g[i] = NULL;
+         break;
+      }
+   }
+}
+
+void send_general_request(struct request_data request_data_param, unsigned char task_priority) {
+   if ((request_data_param.request_type == FALSE_ALARM || request_data_param.request_type == ALARM) &&
+         is_alarm_being_ignored(&request_data_param.ms, request_data_param.request_type)) {
+      #ifdef ALLOW_USE_PRINTF
+      printf("%s alarm is being ignored. Time: %u\n", request_data_param.ms.alarm_source, milliseconds_g);
+      #endif
+
+      free(request_data_param.ms.alarm_source);
+      return;
+   }
+
+   if (request_data_param.request_type == ALARM) {
+      set_flag(&general_flags, IGNORE_ALARMS_FLAG);
+      os_timer_disarm(&ignore_alarms_timer_g);
+
+      os_timer_setfn(&ignore_alarms_timer_g, (os_timer_func_t *) stop_ignoring_alarm, memcpy(alarm_source, request_data_param->alarm_source, alarm_source_length + 1));
+      os_timer_arm(&ignore_alarms_timer_g, IGNORE_ALARMS_TIMEOUT_SEC * 1000, 0);
+      ignore_alarm(request_data_param.ms);
+   } else if (request_data_param.request_type == IMMOBILIZER_ACTIVATION) {
+      xTaskCreate(beep_task, "beep_task", 176, NULL, 1, NULL);
+   }
+
+   if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
+      free(request_data_param.ms.alarm_source);
+      return;
+   }
+
+   xTaskCreate(send_general_request_task, "send_general_request_task", 256, request_data_param, task_priority, NULL);
+}
+
 void send_general_request_task(void *pvParameters) {
    #ifdef ALLOW_USE_PRINTF
    printf("send_general_request_task has been created. Time: %u\n", milliseconds_g);
@@ -759,52 +854,31 @@ void send_general_request_task(void *pvParameters) {
 
    struct request_data *request_data_param = pvParameters;
 
-   if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
-      free(request_data_param->alarm_source);
-      free(request_data_param);
-
-      vTaskDelete(NULL);
-   }
-
    if (request_data_param->request_type == FALSE_ALARM) {
+      vTaskDelay((IGNORE_FALSE_ALARMS_TIMEOUT_SEC * 1000 + 500) / portTICK_RATE_MS);
+
       if (read_flag(general_flags, IGNORE_FALSE_ALARMS_FLAG)) {
-         // Alarm occurred before false alarm within interval
+         #ifdef ALLOW_USE_PRINTF
+         printf("%s is being ignored after timeout. Time: %u\n", request_data_param->alarm_source, milliseconds_g);
+         #endif
+
+         // Alarm occurred after false alarm within interval
          free(request_data_param->alarm_source);
          free(request_data_param);
-
-         vTaskDelete(NULL);
-      } else {
-         vTaskDelay((IGNORE_FALSE_ALARMS_TIMEOUT_SEC * 1000 + 500) / portTICK_RATE_MS);
-
-         if (read_flag(general_flags, IGNORE_FALSE_ALARMS_FLAG)) {
-            // Alarm occurred after false alarm within interval
-            free(request_data_param->alarm_source);
-            free(request_data_param);
-
-            vTaskDelete(NULL);
-         }
-      }
-   } else if (request_data_param->request_type == ALARM) {
-      if (read_flag(general_flags, IGNORE_ALARMS_FLAG)) {
-         free(request_data_param->alarm_source);
-         free(request_data_param);
-
          vTaskDelete(NULL);
       }
-
-      set_flag(&general_flags, IGNORE_ALARMS_FLAG);
-      os_timer_disarm(&ignore_alarms_timer_g);
-      os_timer_setfn(&ignore_alarms_timer_g, (os_timer_func_t *) stop_ignoring_alarms_timer_callback, NULL);
-      os_timer_arm(&ignore_alarms_timer_g, IGNORE_ALARMS_TIMEOUT_SEC * 1000, 0);
-   } else if (request_data_param->request_type == IMMOBILIZER_ACTIVATION) {
-      //xTaskCreate(beep_task, "beep_task", 176, NULL, 1, NULL);
    }
 
-   if (request_data_param->request_type != IMMOBILIZER_ACTIVATION) {
+   if (request_data_param->request_type == ALARM || request_data_param->request_type == FALSE_ALARM) {
       set_flag(&general_flags, IGNORE_FALSE_ALARMS_FLAG);
       os_timer_disarm(&ignore_false_alarms_timer_g);
-      os_timer_setfn(&ignore_false_alarms_timer_g, (os_timer_func_t *) stop_ignoring_false_alarms_timer_callback, NULL);
+
+      unsigned char alarm_source_length = strlen(request_data_param->alarm_source);
+      char *alarm_source = malloc(alarm_source_length + 1);
+
+      os_timer_setfn(&ignore_false_alarms_timer_g, (os_timer_func_t *) stop_ignoring_false_alarm, memcpy(alarm_source, request_data_param->alarm_source, alarm_source_length + 1));
       os_timer_arm(&ignore_false_alarms_timer_g, IGNORE_FALSE_ALARMS_TIMEOUT_SEC * 1000, 0);
+      ignore_false_alarm(alarm_source);
    }
 
    for (;;) {
@@ -863,7 +937,6 @@ void send_general_request_task(void *pvParameters) {
       user_data->execute_on_succeed = general_request_on_succeed_callback;
       user_data->execute_on_error = general_request_on_error_callback;
       user_data->parent_task = xTaskGetCurrentTaskHandle();
-      user_data->parent_task_params = pvParameters;
       user_data->request_max_duration_time = REQUEST_MAX_DURATION_TIME;
       connection->reserve = user_data;
       connection->type = ESPCONN_TCP;
@@ -949,14 +1022,6 @@ void set_default_wi_fi_settings() {
    }
    free(current_ip);
    free(own_ip_address);
-}
-
-void stop_ignoring_alarms_timer_callback() {
-   reset_flag(&general_flags, IGNORE_ALARMS_FLAG);
-}
-
-void stop_ignoring_false_alarms_timer_callback() {
-   reset_flag(&general_flags, IGNORE_FALSE_ALARMS_FLAG);
 }
 
 void pins_config() {

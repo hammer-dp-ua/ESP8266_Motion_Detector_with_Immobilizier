@@ -30,10 +30,12 @@
 #define LONG_POLLING_REQUEST_IDLE_TIME_ON_ERROR (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define LONG_POLLING_REQUEST_MAX_DURATION_TIME  (5.5 * 60 * 1000 / portTICK_RATE_MS) // 5.5 mins
 
-#define IGNORE_ALARMS_TIMEOUT_SEC 30
+#define IGNORE_ALARMS_TIMEOUT_SEC 10
 #define IGNORE_FALSE_ALARMS_TIMEOUT_SEC 5
 
 #define UART_RX_BUFFER_SIZE 30
+
+#define ALARM_SOURCES_LENGTH 7
 
 char RESPONSE_SERVER_SENT_OK[] ICACHE_RODATA_ATTR = "\"statusCode\":\"OK\"";
 char STATUS_INFO_POST_REQUEST[] ICACHE_RODATA_ATTR =
@@ -91,7 +93,6 @@ struct connection_user_data {
    void (*execute_on_error) (struct espconn *connection);
    xTaskHandle timeout_request_supervisor_task;
    xTaskHandle parent_task;
-   void *parent_task_params;
    portTickType request_max_duration_time;
 };
 
@@ -101,8 +102,19 @@ typedef enum {
    IMMOBILIZER_ACTIVATION
 } GeneralRequestType;
 
-struct request_data {
+typedef enum {
+   MOTION_SENSOR_1,
+   MOTION_SENSOR_2,
+   MOTION_SENSOR_3
+} MotionSensorUnit;
+
+struct motion_sensor {
+   MotionSensorUnit unit;
    char *alarm_source;
+};
+
+struct request_data {
+   struct motion_sensor ms;
    GeneralRequestType request_type;
 };
 
@@ -132,6 +144,5 @@ void turn_motion_sensors_on();
 void turn_motion_sensors_off();
 bool are_motion_sensors_turned_on();
 void input_pins_analyzer_task(void *pvParameters);
-void stop_ignoring_alarms_timer_callback();
-void stop_ignoring_false_alarms_timer_callback();
+void send_general_request(struct request_data request_data_param, unsigned char task_priority);
 #endif
