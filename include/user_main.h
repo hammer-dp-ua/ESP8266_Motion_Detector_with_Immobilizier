@@ -35,7 +35,8 @@
 
 #define UART_RX_BUFFER_SIZE 30
 
-#define ALARM_SOURCES_LENGTH 7
+#define ALARM_SOURCES_AMOUNT 7
+#define ALARM_TIMERS_MAX_AMOUNT 5 // 3 alarms + 2 false alarms
 
 char RESPONSE_SERVER_SENT_OK[] ICACHE_RODATA_ATTR = "\"statusCode\":\"OK\"";
 char STATUS_INFO_POST_REQUEST[] ICACHE_RODATA_ATTR =
@@ -114,7 +115,7 @@ struct motion_sensor {
 };
 
 struct request_data {
-   struct motion_sensor ms;
+   struct motion_sensor *ms;
    GeneralRequestType request_type;
 };
 
@@ -144,5 +145,8 @@ void turn_motion_sensors_on();
 void turn_motion_sensors_off();
 bool are_motion_sensors_turned_on();
 void input_pins_analyzer_task(void *pvParameters);
-void send_general_request(struct request_data request_data_param, unsigned char task_priority);
+void send_general_request(struct request_data *request_data_param, unsigned char task_priority);
+bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request_type);
+void ignore_alarm(struct motion_sensor *ms, unsigned int timeout_ms);
+void stop_ignoring_alarm(xTimerHandle xTimer);
 #endif
