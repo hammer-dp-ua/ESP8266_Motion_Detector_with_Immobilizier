@@ -7,9 +7,7 @@
 #define AP_CONNECTION_STATUS_LED_PIN         GPIO_Pin_5
 #define SERVER_AVAILABILITY_STATUS_LED_PIN   GPIO_Pin_4
 #define BUZZER_PIN                           GPIO_Pin_2
-#define MOTION_SENSOR_1_ENABLE_PIN           GPIO_Pin_12
-#define MOTION_SENSOR_2_ENABLE_PIN           GPIO_Pin_13
-#define MOTION_SENSOR_3_ENABLE_PIN           GPIO_Pin_14
+#define MOTION_SENSORS_ENABLE_PIN            GPIO_Pin_12
 
 #ifndef true // needed only for Eclipse
    typedef unsigned char bool;
@@ -30,7 +28,7 @@
 #define LONG_POLLING_REQUEST_IDLE_TIME_ON_ERROR (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define LONG_POLLING_REQUEST_MAX_DURATION_TIME  (5.5 * 60 * 1000 / portTICK_RATE_MS) // 5.5 mins
 
-#define IGNORE_ALARMS_TIMEOUT_SEC 10
+#define IGNORE_ALARMS_TIMEOUT_SEC 20
 #define IGNORE_FALSE_ALARMS_TIMEOUT_SEC 5
 
 #define UART_RX_BUFFER_SIZE 30

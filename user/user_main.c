@@ -45,7 +45,7 @@ xSemaphoreHandle status_request_semaphore_g;
 xSemaphoreHandle requests_mutex_g;
 xSemaphoreHandle buzzer_semaphore_g;
 
-xTimerHandle alarm_timers[ALARM_TIMERS_MAX_AMOUNT];
+xTimerHandle alarm_timers_g[ALARM_TIMERS_MAX_AMOUNT];
 
 /******************************************************************************
  * FunctionName : user_rf_cal_sector_set
@@ -162,14 +162,14 @@ void beep_task() {
    vSemaphoreCreateBinary(buzzer_semaphore_g);
 
    pin_output_set(BUZZER_PIN);
-   vTaskDelay(80 / portTICK_RATE_MS);
+   vTaskDelay(300 / portTICK_RATE_MS);
    pin_output_reset(BUZZER_PIN);
 
    vTaskDelay(500 / portTICK_RATE_MS);
 
    if (xSemaphoreTake(buzzer_semaphore_g, REQUEST_MAX_DURATION_TIME) == pdPASS) {
       pin_output_set(BUZZER_PIN);
-      vTaskDelay(100 / portTICK_RATE_MS);
+      vTaskDelay(300 / portTICK_RATE_MS);
       pin_output_reset(BUZZER_PIN);
    }
 
@@ -250,7 +250,7 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
          user_data->response = response;
 
          #ifdef ALLOW_USE_PRINTF
-         printf("Response received: %sTime: %u\n", pdata, milliseconds_g);
+         printf("Response received: Time: %u\n", milliseconds_g);
          #endif
       }
       free(server_sent);
@@ -451,7 +451,7 @@ void input_pins_analyzer_task(void *pvParameters) {
    free(activated_pin_with_prefix);
 
    #ifdef ALLOW_USE_PRINTF
-   printf("pin without prefix: %s\n", activated_pin);
+   printf("\n pin without prefix: %s\n", activated_pin);
    #endif
 
    struct request_data *request_data_param = (struct request_data *) zalloc(sizeof(struct request_data));
@@ -767,23 +767,17 @@ bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request
 
    unsigned char i;
 
-   if (request_type == FALSE_ALARM) {
-      for (i = 0; i < ALARM_SOURCES_AMOUNT; i++) {
-         struct motion_sensor *found_motion_sensor = alarm_sources_g[i];
+   for (i = 0; i < ALARM_SOURCES_AMOUNT; i++) {
+      struct motion_sensor *found_motion_sensor = alarm_sources_g[i];
 
-         if (found_motion_sensor->unit == ms->unit) {
-            // Because of this "false alarm" will be ignored even when "alarm" is being ignored if "alarm" timeout is longer than "false alarm" timeout
-            return true;
-         }
-     }
-   } else if (request_type == ALARM) {
-      for (i = 0; i < ALARM_SOURCES_AMOUNT; i++) {
-         struct motion_sensor *found_motion_sensor = alarm_sources_g[i];
-
-         if (found_motion_sensor->unit == ms->unit && strcmp(found_motion_sensor->alarm_source, ms->alarm_source) == 0) {
-            return true;
-         }
-     }
+      if (found_motion_sensor != NULL && request_type == ALARM &&
+            found_motion_sensor->unit == ms->unit && strcmp(found_motion_sensor->alarm_source, ms->alarm_source) == 0) {
+         return true;
+      } else if (found_motion_sensor != NULL && request_type == FALSE_ALARM &&
+            found_motion_sensor->unit == ms->unit) {
+         // Because of this "false alarm" will be ignored even when "alarm" is being ignored if "alarm" timeout is longer than "false alarm" timeout
+         return true;
+      }
    }
    return false;
 }
@@ -799,9 +793,16 @@ void ignore_alarm(struct motion_sensor *ms, unsigned int timeout_ms) {
    }
 
    for (i = 0; i < ALARM_TIMERS_MAX_AMOUNT; i++) {
-      if (alarm_timers[i] == NULL) {
-         xTimerHandle created_timer = xTimerCreate(NULL, timeout_ms/ portTICK_RATE_MS, pdFALSE, ms, stop_ignoring_alarm);
-         alarm_timers[i] = created_timer;
+      if (alarm_timers_g[i] == NULL) {
+         xTimerHandle created_timer = xTimerCreate(NULL, timeout_ms / portTICK_RATE_MS, pdFALSE, ms, stop_ignoring_alarm);
+
+         xTimerStart(created_timer, 0);
+         alarm_timers_g[i] = created_timer;
+
+         #ifdef ALLOW_USE_PRINTF
+         printf("\n ignoring alarm timer for %s has been created. Index: %u\n", ms->alarm_source, i);
+         #endif
+
          break;
       }
    }
@@ -819,6 +820,10 @@ void stop_ignoring_alarm(xTimerHandle xTimer) {
       struct motion_sensor *found_motion_sensor = alarm_sources_g[i];
 
       if (found_motion_sensor == ms) {
+         #ifdef ALLOW_USE_PRINTF
+         printf("\n %s is being deleted from Alarm Sources. Time: %u\n", found_motion_sensor->alarm_source, milliseconds_g);
+         #endif
+
          free(found_motion_sensor->alarm_source);
          free(found_motion_sensor);
          alarm_sources_g[i] = NULL;
@@ -827,8 +832,8 @@ void stop_ignoring_alarm(xTimerHandle xTimer) {
    }
 
    for (i = 0; i < ALARM_TIMERS_MAX_AMOUNT; i++) {
-      if (alarm_timers[i] == xTimer) {
-         alarm_timers[i] = NULL;
+      if (alarm_timers_g[i] == xTimer) {
+         alarm_timers_g[i] = NULL;
          xTimerDelete(xTimer, 0);
          break;
       }
@@ -848,7 +853,7 @@ void send_general_request(struct request_data *request_data_param, unsigned char
    if ((request_data_param->request_type == FALSE_ALARM || request_data_param->request_type == ALARM) &&
          is_alarm_being_ignored(request_data_param->ms, request_data_param->request_type)) {
       #ifdef ALLOW_USE_PRINTF
-      printf("%s alarm is being ignored. Time: %u\n", request_data_param->ms->alarm_source, milliseconds_g);
+      printf("\n %s alarm is being ignored. Time: %u\n", request_data_param->ms->alarm_source, milliseconds_g);
       #endif
 
       free(request_data_param->ms->alarm_source);
@@ -858,7 +863,7 @@ void send_general_request(struct request_data *request_data_param, unsigned char
    }
 
    if (request_data_param->request_type == IMMOBILIZER_ACTIVATION) {
-      xTaskCreate(beep_task, "beep_task", 176, NULL, 1, NULL);
+      xTaskCreate(beep_task, "beep_task", 200, NULL, 1, NULL);
    }
 
    xTaskCreate(send_general_request_task, "send_general_request_task", 256, request_data_param, task_priority, NULL);
@@ -866,7 +871,7 @@ void send_general_request(struct request_data *request_data_param, unsigned char
 
 void send_general_request_task(void *pvParameters) {
    #ifdef ALLOW_USE_PRINTF
-   printf("send_general_request_task has been created. Time: %u\n", milliseconds_g);
+   printf("\n send_general_request_task has been created. Time: %u\n", milliseconds_g);
    #endif
 
    struct request_data *request_data_param = pvParameters;
@@ -878,7 +883,7 @@ void send_general_request_task(void *pvParameters) {
 
       if (is_alarm_being_ignored(request_data_param->ms, request_data_param->request_type)) {
          #ifdef ALLOW_USE_PRINTF
-         printf("%s is being ignored after timeout. Time: %u\n", request_data_param->ms->alarm_source, milliseconds_g);
+         printf("\n %s is being ignored after timeout. Time: %u\n", request_data_param->ms->alarm_source, milliseconds_g);
          #endif
 
          // Alarm occurred after false alarm within interval
@@ -893,20 +898,17 @@ void send_general_request_task(void *pvParameters) {
 
    GeneralRequestType request_type = request_data_param->request_type;
    unsigned char alarm_source_length = (request_type == ALARM || request_type == FALSE_ALARM) ? (strlen(request_data_param->ms->alarm_source) + 1) : 0;
-   char alarm_source[alarm_source_length];
-
-   memcpy(alarm_source, request_data_param->ms->alarm_source, alarm_source_length);
 
    for (;;) {
       xSemaphoreTake(requests_mutex_g, portMAX_DELAY);
 
       #ifdef ALLOW_USE_PRINTF
-      printf("send_general_request_task started. Time: %u\n", milliseconds_g);
+      printf("\n send_general_request_task started. Time: %u\n", milliseconds_g);
       #endif
 
       if (!read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN)) {
          #ifdef ALLOW_USE_PRINTF
-         printf("Can't send alarm request, because not connected to AP. Time: %u\n", milliseconds_g);
+         printf("\n Can't send alarm request, because not connected to AP. Time: %u\n", milliseconds_g);
          #endif
 
          vTaskDelay(2000 / portTICK_RATE_MS);
@@ -925,10 +927,14 @@ void send_general_request_task(void *pvParameters) {
 
       if (request_type == ALARM) {
          request_template = get_string_from_rom(ALARM_GET_REQUEST);
+         char alarm_source[alarm_source_length];
+         memcpy(alarm_source, request_data_param->ms->alarm_source, alarm_source_length);
          char *request_template_parameters[] = {alarm_source, server_ip_address, NULL};
          request = set_string_parameters(request_template, request_template_parameters);
       } else if (request_type == FALSE_ALARM) {
          request_template = get_string_from_rom(FALSE_ALARM_GET_REQUEST);
+         char alarm_source[alarm_source_length];
+         memcpy(alarm_source, request_data_param->ms->alarm_source, alarm_source_length);
          char *request_template_parameters[] = {alarm_source, server_ip_address, NULL};
          request = set_string_parameters(request_template, request_template_parameters);
       } else if (request_type == IMMOBILIZER_ACTIVATION) {
@@ -941,7 +947,7 @@ void send_general_request_task(void *pvParameters) {
       free(server_ip_address);
 
       #ifdef ALLOW_USE_PRINTF
-      printf("Request created:\n<<<\n%s>>>\n", request);
+      printf("\n Request created:\n<<<\n%s>>>\n", request);
       #endif
 
       struct espconn *connection = (struct espconn *) zalloc(sizeof(struct espconn));
@@ -1044,8 +1050,7 @@ void set_default_wi_fi_settings() {
 void pins_config() {
    GPIO_ConfigTypeDef output_pins;
    output_pins.GPIO_Mode = GPIO_Mode_Output;
-   output_pins.GPIO_Pin = AP_CONNECTION_STATUS_LED_PIN | SERVER_AVAILABILITY_STATUS_LED_PIN | BUZZER_PIN |
-         MOTION_SENSOR_1_ENABLE_PIN | MOTION_SENSOR_2_ENABLE_PIN | MOTION_SENSOR_3_ENABLE_PIN;
+   output_pins.GPIO_Pin = AP_CONNECTION_STATUS_LED_PIN | SERVER_AVAILABILITY_STATUS_LED_PIN | BUZZER_PIN | MOTION_SENSORS_ENABLE_PIN;
    pin_output_reset(AP_CONNECTION_STATUS_LED_PIN);
    pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
    pin_output_reset(BUZZER_PIN);
@@ -1112,9 +1117,6 @@ void uart_rx_intr_handler(void *params) {
          }
          *(received_data + fifo_len) = '\0';
 
-         #ifdef ALLOW_USE_PRINTF
-         printf("Received pin info: %s\n", received_data);
-         #endif
          xTaskCreate(input_pins_analyzer_task, "input_pins_analyzer_task", 256, received_data, 1, NULL);
 
          WRITE_PERI_REG(UART_INT_CLR(UART0), UART_RXFIFO_TOUT_INT_CLR);
@@ -1127,26 +1129,22 @@ void uart_rx_intr_handler(void *params) {
 }
 
 void turn_motion_sensors_on() {
-   pin_output_reset(MOTION_SENSOR_1_ENABLE_PIN);
-   pin_output_reset(MOTION_SENSOR_2_ENABLE_PIN);
-   pin_output_reset(MOTION_SENSOR_3_ENABLE_PIN);
+   pin_output_reset(MOTION_SENSORS_ENABLE_PIN);
 }
 
 void turn_motion_sensors_off() {
-   pin_output_set(MOTION_SENSOR_1_ENABLE_PIN);
-   pin_output_set(MOTION_SENSOR_2_ENABLE_PIN);
-   pin_output_set(MOTION_SENSOR_3_ENABLE_PIN);
+   pin_output_set(MOTION_SENSORS_ENABLE_PIN);
 }
 
 bool are_motion_sensors_turned_on() {
-   return read_output_pin_state(MOTION_SENSOR_1_ENABLE_PIN) && read_output_pin_state(MOTION_SENSOR_2_ENABLE_PIN) && read_output_pin_state(MOTION_SENSOR_3_ENABLE_PIN);
+   return read_output_pin_state(MOTION_SENSORS_ENABLE_PIN);
 }
 
 void user_init(void) {
-   vTaskDelay(5000 / portTICK_RATE_MS);
-
    pins_config();
    uart_config();
+
+   vTaskDelay(5000 / portTICK_RATE_MS);
 
    #ifdef ALLOW_USE_PRINTF
    printf("\nSoftware is running from: %s\n", system_upgrade_userbin_check() ? "user2.bin" : "user1.bin");
