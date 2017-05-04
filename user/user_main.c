@@ -32,6 +32,7 @@ unsigned int milliseconds_g;
 int signal_strength_g;
 unsigned short errors_counter_g;
 LOCAL os_timer_t millisecons_time_serv_g;
+LOCAL os_timer_t motion_detectors_ignore_timer_g;
 
 struct _esp_tcp user_tcp;
 
@@ -406,7 +407,8 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
 
 bool compare_pins_names(char *activated_pin, char *rom_pin_name) {
    char *comparable_pin = get_string_from_rom(rom_pin_name);
-   bool names_matched = strcmp(activated_pin, comparable_pin) == 0;
+   bool names_matched = compare_strings(activated_pin, comparable_pin);
+   printf("\n activated_pin content after compare_strings: %s\n", activated_pin);
 
    free(comparable_pin);
    return names_matched;
@@ -430,21 +432,21 @@ void input_pins_analyzer_task(void *pvParameters) {
 
    if (found_pin_prefix == NULL) {
       #ifdef ALLOW_USE_PRINTF
-      printf("pin prefix is not found\n");
+      printf("\n pin prefix is not found\n");
       #endif
       free(activated_pin_with_prefix);
       vTaskDelete(NULL);
    }
 
-   unsigned char pin_name_length = 0;
-   while (*(activated_pin_with_prefix + prefix_length + pin_name_length) != '\0') {
-      pin_name_length++;
+   unsigned char full_pin_name_length = 0;
+   while (*(activated_pin_with_prefix + prefix_length + full_pin_name_length) != '\0') {
+      full_pin_name_length++;
    }
 
-   char *activated_pin = malloc(pin_name_length);
+   char *activated_pin = malloc(full_pin_name_length);
    unsigned char i = 0;
 
-   for (i = 0; i < pin_name_length; i++) {
+   for (i = 0; i < full_pin_name_length; i++) {
       *(activated_pin + i) = *(activated_pin_with_prefix + prefix_length + i);
    }
    *(activated_pin + i) = '\0';
@@ -841,7 +843,7 @@ void stop_ignoring_alarm(xTimerHandle xTimer) {
 }
 
 void send_general_request(struct request_data *request_data_param, unsigned char task_priority) {
-   if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
+   if (read_flag(general_flags, IGNORE_MOTION_DETECTORS_FLAG) || read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
       if (request_data_param->ms != NULL) {
          free(request_data_param->ms->alarm_source);
          free(request_data_param->ms);
@@ -898,6 +900,11 @@ void send_general_request_task(void *pvParameters) {
 
    GeneralRequestType request_type = request_data_param->request_type;
    unsigned char alarm_source_length = (request_type == ALARM || request_type == FALSE_ALARM) ? (strlen(request_data_param->ms->alarm_source) + 1) : 0;
+   char alarm_source[alarm_source_length];
+
+   if (alarm_source_length > 0) {
+      memcpy(alarm_source, request_data_param->ms->alarm_source, alarm_source_length);
+   }
 
    for (;;) {
       xSemaphoreTake(requests_mutex_g, portMAX_DELAY);
@@ -927,14 +934,10 @@ void send_general_request_task(void *pvParameters) {
 
       if (request_type == ALARM) {
          request_template = get_string_from_rom(ALARM_GET_REQUEST);
-         char alarm_source[alarm_source_length];
-         memcpy(alarm_source, request_data_param->ms->alarm_source, alarm_source_length);
          char *request_template_parameters[] = {alarm_source, server_ip_address, NULL};
          request = set_string_parameters(request_template, request_template_parameters);
       } else if (request_type == FALSE_ALARM) {
          request_template = get_string_from_rom(FALSE_ALARM_GET_REQUEST);
-         char alarm_source[alarm_source_length];
-         memcpy(alarm_source, request_data_param->ms->alarm_source, alarm_source_length);
          char *request_template_parameters[] = {alarm_source, server_ip_address, NULL};
          request = set_string_parameters(request_template, request_template_parameters);
       } else if (request_type == IMMOBILIZER_ACTIVATION) {
@@ -1128,11 +1131,20 @@ void uart_rx_intr_handler(void *params) {
    }
 }
 
+void stop_ignoring_motion_detectors() {
+   reset_flag(&general_flags, IGNORE_MOTION_DETECTORS_FLAG);
+}
+
 void turn_motion_sensors_on() {
+   set_flag(&general_flags, IGNORE_MOTION_DETECTORS_FLAG);
+   os_timer_disarm(&motion_detectors_ignore_timer_g);
+   os_timer_setfn(&motion_detectors_ignore_timer_g, (os_timer_func_t *) stop_ignoring_motion_detectors, NULL);
+   os_timer_arm(&motion_detectors_ignore_timer_g, IGNORE_MOTION_DETECTORS_TIMEOUT_AFTER_TURN_ON_SEC * 1000, false);
    pin_output_reset(MOTION_SENSORS_ENABLE_PIN);
 }
 
 void turn_motion_sensors_off() {
+   set_flag(&general_flags, IGNORE_MOTION_DETECTORS_FLAG);
    pin_output_set(MOTION_SENSORS_ENABLE_PIN);
 }
 

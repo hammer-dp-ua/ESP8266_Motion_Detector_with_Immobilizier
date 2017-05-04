@@ -21,6 +21,7 @@
 #define REQUEST_ERROR_OCCURRED_FLAG                8
 #define IGNORE_ALARMS_FLAG                         16
 #define IGNORE_FALSE_ALARMS_FLAG                   32
+#define IGNORE_MOTION_DETECTORS_FLAG               64
 
 #define REQUEST_IDLE_TIME_ON_ERROR              (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define REQUEST_MAX_DURATION_TIME               (10 * 1000 / portTICK_RATE_MS) // 10 sec
@@ -30,6 +31,7 @@
 
 #define IGNORE_ALARMS_TIMEOUT_SEC 20
 #define IGNORE_FALSE_ALARMS_TIMEOUT_SEC 5
+#define IGNORE_MOTION_DETECTORS_TIMEOUT_AFTER_TURN_ON_SEC 40
 
 #define UART_RX_BUFFER_SIZE 30
 
