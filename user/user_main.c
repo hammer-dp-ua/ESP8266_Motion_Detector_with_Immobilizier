@@ -33,6 +33,7 @@ int signal_strength_g;
 unsigned short errors_counter_g;
 LOCAL os_timer_t millisecons_time_serv_g;
 LOCAL os_timer_t motion_detectors_ignore_timer_g;
+LOCAL os_timer_t immobilizer_beeper_ignore_timer_g;
 
 struct _esp_tcp user_tcp;
 
@@ -153,6 +154,10 @@ void ICACHE_FLASH_ATTR testing_task(void *pvParameters) {
    for (;;) {
       vTaskDelay(1000 / portTICK_RATE_MS);
    }
+}
+
+void stop_ignoring_immobilizer_beeper() {
+   reset_flag(&general_flags, IGNORE_IMMOBILIZER_BEEPER_FLAG);
 }
 
 void beep_task() {
@@ -408,7 +413,6 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
 bool compare_pins_names(char *activated_pin, char *rom_pin_name) {
    char *comparable_pin = get_string_from_rom(rom_pin_name);
    bool names_matched = compare_strings(activated_pin, comparable_pin);
-   printf("\n activated_pin content after compare_strings: %s\n", activated_pin);
 
    free(comparable_pin);
    return names_matched;
@@ -438,18 +442,18 @@ void input_pins_analyzer_task(void *pvParameters) {
       vTaskDelete(NULL);
    }
 
-   unsigned char full_pin_name_length = 0;
-   while (*(activated_pin_with_prefix + prefix_length + full_pin_name_length) != '\0') {
-      full_pin_name_length++;
+   unsigned char pin_name_length = 0;
+   while (*(activated_pin_with_prefix + prefix_length + pin_name_length) != '\0') {
+      pin_name_length++;
    }
 
-   char *activated_pin = malloc(full_pin_name_length);
+   char *activated_pin = malloc(pin_name_length + 1);
    unsigned char i = 0;
 
-   for (i = 0; i < full_pin_name_length; i++) {
+   for (i = 0; i < pin_name_length; i++) {
       *(activated_pin + i) = *(activated_pin_with_prefix + prefix_length + i);
    }
-   *(activated_pin + i) = '\0';
+   *(activated_pin + pin_name_length) = '\0';
    free(activated_pin_with_prefix);
 
    #ifdef ALLOW_USE_PRINTF
@@ -865,7 +869,14 @@ void send_general_request(struct request_data *request_data_param, unsigned char
    }
 
    if (request_data_param->request_type == IMMOBILIZER_ACTIVATION) {
-      xTaskCreate(beep_task, "beep_task", 200, NULL, 1, NULL);
+      if (!read_flag(general_flags, IGNORE_IMMOBILIZER_BEEPER_FLAG)) {
+         set_flag(&general_flags, IGNORE_IMMOBILIZER_BEEPER_FLAG);
+         xTaskCreate(beep_task, "beep_task", 200, NULL, 1, NULL);
+
+         os_timer_disarm(&immobilizer_beeper_ignore_timer_g);
+         os_timer_setfn(&immobilizer_beeper_ignore_timer_g, (os_timer_func_t *) stop_ignoring_immobilizer_beeper, NULL);
+         os_timer_arm(&immobilizer_beeper_ignore_timer_g, IGNORE_IMMOBILIZER_BEEPER_SEC * 1000, false);
+      }
    }
 
    xTaskCreate(send_general_request_task, "send_general_request_task", 256, request_data_param, task_priority, NULL);
@@ -1137,9 +1148,11 @@ void stop_ignoring_motion_detectors() {
 
 void turn_motion_sensors_on() {
    set_flag(&general_flags, IGNORE_MOTION_DETECTORS_FLAG);
+
    os_timer_disarm(&motion_detectors_ignore_timer_g);
    os_timer_setfn(&motion_detectors_ignore_timer_g, (os_timer_func_t *) stop_ignoring_motion_detectors, NULL);
    os_timer_arm(&motion_detectors_ignore_timer_g, IGNORE_MOTION_DETECTORS_TIMEOUT_AFTER_TURN_ON_SEC * 1000, false);
+
    pin_output_reset(MOTION_SENSORS_ENABLE_PIN);
 }
 
@@ -1154,6 +1167,7 @@ bool are_motion_sensors_turned_on() {
 
 void user_init(void) {
    pins_config();
+   turn_motion_sensors_off();
    uart_config();
 
    vTaskDelay(5000 / portTICK_RATE_MS);
