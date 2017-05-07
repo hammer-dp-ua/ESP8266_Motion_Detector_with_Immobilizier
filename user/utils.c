@@ -207,6 +207,28 @@ char *get_string_from_rom(const char *rom_string) {
    return result;
 }
 
+bool compare_strings(char *string1, char *string2) {
+   if (string1 == NULL || string2 == NULL) {
+      return false;
+   }
+
+   bool result = true;
+   unsigned short i = 0;
+
+   while (result) {
+      char string1_character = *(string1 + i);
+      char string2_character = *(string2 + i);
+
+      if (string1_character == '\0' && string2_character == '\0') {
+         break;
+      } else if (string1_character == '\0' || string2_character == '\0' || string1_character != string2_character) {
+         result = false;
+      }
+      i++;
+   }
+   return result;
+}
+
 /**
  * @param pin : GPIO pin GPIO_Pin_x
  */

@@ -34,6 +34,7 @@ unsigned short errors_counter_g;
 LOCAL os_timer_t millisecons_time_serv_g;
 LOCAL os_timer_t motion_detectors_ignore_timer_g;
 LOCAL os_timer_t immobilizer_beeper_ignore_timer_g;
+LOCAL os_timer_t immobilizer_ignore_timer_g;
 
 struct _esp_tcp user_tcp;
 
@@ -158,6 +159,10 @@ void ICACHE_FLASH_ATTR testing_task(void *pvParameters) {
 
 void stop_ignoring_immobilizer_beeper() {
    reset_flag(&general_flags, IGNORE_IMMOBILIZER_BEEPER_FLAG);
+}
+
+void stop_ignoring_immobilizer() {
+   reset_flag(&general_flags, IGNORE_IMMOBILIZER_FLAG);
 }
 
 void beep_task() {
@@ -869,6 +874,11 @@ void send_general_request(struct request_data *request_data_param, unsigned char
    }
 
    if (request_data_param->request_type == IMMOBILIZER_ACTIVATION) {
+      if (read_flag(general_flags, IGNORE_IMMOBILIZER_FLAG)) {
+         free(request_data_param);
+         return;
+      }
+
       if (!read_flag(general_flags, IGNORE_IMMOBILIZER_BEEPER_FLAG)) {
          set_flag(&general_flags, IGNORE_IMMOBILIZER_BEEPER_FLAG);
          xTaskCreate(beep_task, "beep_task", 200, NULL, 1, NULL);
@@ -877,6 +887,11 @@ void send_general_request(struct request_data *request_data_param, unsigned char
          os_timer_setfn(&immobilizer_beeper_ignore_timer_g, (os_timer_func_t *) stop_ignoring_immobilizer_beeper, NULL);
          os_timer_arm(&immobilizer_beeper_ignore_timer_g, IGNORE_IMMOBILIZER_BEEPER_SEC * 1000, false);
       }
+
+      set_flag(&general_flags, IGNORE_IMMOBILIZER_FLAG);
+      os_timer_disarm(&immobilizer_ignore_timer_g);
+      os_timer_setfn(&immobilizer_ignore_timer_g, (os_timer_func_t *) stop_ignoring_immobilizer, NULL);
+      os_timer_arm(&immobilizer_ignore_timer_g, IGNORE_IMMOBILIZER_SEC * 1000, false);
    }
 
    xTaskCreate(send_general_request_task, "send_general_request_task", 256, request_data_param, task_priority, NULL);
@@ -1153,12 +1168,12 @@ void turn_motion_sensors_on() {
    os_timer_setfn(&motion_detectors_ignore_timer_g, (os_timer_func_t *) stop_ignoring_motion_detectors, NULL);
    os_timer_arm(&motion_detectors_ignore_timer_g, IGNORE_MOTION_DETECTORS_TIMEOUT_AFTER_TURN_ON_SEC * 1000, false);
 
-   pin_output_reset(MOTION_SENSORS_ENABLE_PIN);
+   pin_output_set(MOTION_SENSORS_ENABLE_PIN);
 }
 
 void turn_motion_sensors_off() {
    set_flag(&general_flags, IGNORE_MOTION_DETECTORS_FLAG);
-   pin_output_set(MOTION_SENSORS_ENABLE_PIN);
+   pin_output_reset(MOTION_SENSORS_ENABLE_PIN);
 }
 
 bool are_motion_sensors_turned_on() {
