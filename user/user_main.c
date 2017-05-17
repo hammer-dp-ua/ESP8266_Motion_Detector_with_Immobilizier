@@ -28,7 +28,7 @@
 #include "user_main.h"
 #include "global_printf_usage.h"
 
-unsigned int milliseconds_g;
+unsigned int milliseconds_counter_g;
 int signal_strength_g;
 unsigned short errors_counter_g;
 LOCAL os_timer_t millisecons_time_serv_g;
@@ -93,13 +93,13 @@ uint32 user_rf_cal_sector_set(void) {
 }
 
 LOCAL void milliseconds_counter() {
-   milliseconds_g++;
+   milliseconds_counter_g++;
 }
 
 void start_100millisecons_counter() {
    os_timer_disarm(&millisecons_time_serv_g);
    os_timer_setfn(&millisecons_time_serv_g, (os_timer_func_t *) milliseconds_counter, NULL);
-   os_timer_arm(&millisecons_time_serv_g, 100, 1); // 100 ms
+   os_timer_arm(&millisecons_time_serv_g, 1000 / MILLISECONDS_COUNTER_DIVIDER, 1); // 100 ms
 }
 
 void stop_milliseconds_counter() {
@@ -167,13 +167,13 @@ void stop_ignoring_immobilizer() {
 
 void beep_task() {
    #ifdef ALLOW_USE_PRINTF
-   printf("beep_task has been created. Time: %u\n", milliseconds_g);
+   printf("beep_task has been created. Time: %u\n", milliseconds_counter_g);
    #endif
 
    vSemaphoreCreateBinary(buzzer_semaphore_g);
 
    pin_output_set(BUZZER_PIN);
-   vTaskDelay(300 / portTICK_RATE_MS);
+   vTaskDelay(80 / portTICK_RATE_MS);
    pin_output_reset(BUZZER_PIN);
 
    vTaskDelay(500 / portTICK_RATE_MS);
@@ -224,7 +224,7 @@ void successfull_disconnected_tcp_handler_callback(void *arg) {
    bool response_received = user_data->response_received;
 
    #ifdef ALLOW_USE_PRINTF
-   printf("Disconnected callback beginning. Response %s received. Time: %u\n", response_received ? "has been" : "has not been", milliseconds_g);
+   printf("Disconnected callback beginning. Response %s received. Time: %u\n", response_received ? "has been" : "has not been", milliseconds_counter_g);
    #endif
 
    void (*execute_on_succeed)(struct espconn *connection) = user_data->execute_on_succeed;
@@ -235,7 +235,7 @@ void successfull_disconnected_tcp_handler_callback(void *arg) {
 
 void tcp_connection_error_handler_callback(void *arg, sint8 err) {
    #ifdef ALLOW_USE_PRINTF
-   printf("Connection error callback. Error code: %d. Time: %u\n", err, milliseconds_g);
+   printf("Connection error callback. Error code: %d. Time: %u\n", err, milliseconds_counter_g);
    #endif
 
    struct espconn *connection = arg;
@@ -261,7 +261,7 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
          user_data->response = response;
 
          #ifdef ALLOW_USE_PRINTF
-         printf("Response received: Time: %u\n", milliseconds_g);
+         printf("Response received: Time: %u\n", milliseconds_counter_g);
          #endif
       }
       free(server_sent);
@@ -281,7 +281,7 @@ void tcp_request_successfully_written_into_buffer_handler_callback() {
 
 void status_request_on_error_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
-   printf("status_request_on_error_callback. Time: %u\n", milliseconds_g);
+   printf("status_request_on_error_callback. Time: %u\n", milliseconds_counter_g);
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
@@ -296,7 +296,7 @@ void status_request_on_error_callback(struct espconn *connection) {
 
 void general_request_on_error_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
-   printf("general_request_on_error_callback. Time: %u\n", milliseconds_g);
+   printf("general_request_on_error_callback. Time: %u\n", milliseconds_counter_g);
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
@@ -320,7 +320,7 @@ void check_for_update_firmware(char *response) {
 
 void status_request_on_succeed_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
-   printf("status_request_on_succeed_callback, Time: %u\n", milliseconds_g);
+   printf("status_request_on_succeed_callback, Time: %u\n", milliseconds_counter_g);
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
@@ -345,7 +345,7 @@ void status_request_on_succeed_callback(struct espconn *connection) {
 
 void general_request_on_succeed_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
-   printf("general_request_on_succeed_callback. Time: %u\n", milliseconds_g);
+   printf("general_request_on_succeed_callback. Time: %u\n", milliseconds_counter_g);
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
@@ -500,7 +500,7 @@ void timeout_request_supervisor_task(void *pvParameters) {
    vTaskDelay(user_data->request_max_duration_time);
 
    #ifdef ALLOW_USE_PRINTF
-   printf("Request timeout. Time: %u\n", milliseconds_g);
+   printf("Request timeout. Time: %u\n", milliseconds_counter_g);
    #endif
 
    if (connection->state == ESPCONN_CONNECT) {
@@ -531,14 +531,14 @@ void ota_finished_callback(void *arg) {
 
    if (update->upgrade_flag == true) {
       #ifdef ALLOW_USE_PRINTF
-      printf("[OTA] success; rebooting! Time: %u\n", milliseconds_g);
+      printf("[OTA] success; rebooting! Time: %u\n", milliseconds_counter_g);
       #endif
 
       system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
       system_upgrade_reboot();
    } else {
       #ifdef ALLOW_USE_PRINTF
-      printf("[OTA] failed! Time: %u\n", milliseconds_g);
+      printf("[OTA] failed! Time: %u\n", milliseconds_counter_g);
       #endif
 
       system_restart();
@@ -565,7 +565,7 @@ void blink_leds_while_updating_task(void *pvParameters) {
 
 void upgrade_firmware() {
    #ifdef ALLOW_USE_PRINTF
-   printf("\nUpdating firmware... Time: %u\n", milliseconds_g);
+   printf("\nUpdating firmware... Time: %u\n", milliseconds_counter_g);
    #endif
 
    turn_motion_sensors_off();
@@ -685,12 +685,12 @@ void send_status_requests_task(void *pvParameters) {
       }
 
       #ifdef ALLOW_USE_PRINTF
-      printf("send_status_requests_task started. Time: %u\n", milliseconds_g);
+      printf("send_status_requests_task started. Time: %u\n", milliseconds_counter_g);
       #endif
 
       if (!read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN)) {
          #ifdef ALLOW_USE_PRINTF
-         printf("Can't send status request, because not connected to AP. Time: %u\n", milliseconds_g);
+         printf("Can't send status request, because not connected to AP. Time: %u\n", milliseconds_counter_g);
          #endif
 
          xSemaphoreGive(requests_mutex_g);
@@ -713,9 +713,11 @@ void send_status_requests_task(void *pvParameters) {
       char *device_name = get_string_from_rom(DEVICE_NAME);
       char errors_counter[5];
       sprintf(errors_counter, "%d", errors_counter_g);
+      char uptime[10];
+      sprintf(uptime, "%d", milliseconds_counter_g / MILLISECONDS_COUNTER_DIVIDER);
       char build_timestamp[30];
       sprintf(build_timestamp, "%s", __TIMESTAMP__);
-      char *status_info_request_payload_template_parameters[] = {signal_strength, device_name, errors_counter, build_timestamp, NULL};
+      char *status_info_request_payload_template_parameters[] = {signal_strength, device_name, errors_counter, uptime, build_timestamp, NULL};
       char *status_info_request_payload_template = get_string_from_rom(STATUS_INFO_REQUEST_PAYLOAD);
       char *request_payload = set_string_parameters(status_info_request_payload_template, status_info_request_payload_template_parameters);
 
@@ -832,7 +834,7 @@ void stop_ignoring_alarm(xTimerHandle xTimer) {
 
       if (found_motion_sensor == ms) {
          #ifdef ALLOW_USE_PRINTF
-         printf("\n %s is being deleted from Alarm Sources. Time: %u\n", found_motion_sensor->alarm_source, milliseconds_g);
+         printf("\n %s is being deleted from Alarm Sources. Time: %u\n", found_motion_sensor->alarm_source, milliseconds_counter_g);
          #endif
 
          free(found_motion_sensor->alarm_source);
@@ -864,7 +866,7 @@ void send_general_request(struct request_data *request_data_param, unsigned char
    if ((request_data_param->request_type == FALSE_ALARM || request_data_param->request_type == ALARM) &&
          is_alarm_being_ignored(request_data_param->ms, request_data_param->request_type)) {
       #ifdef ALLOW_USE_PRINTF
-      printf("\n %s alarm is being ignored. Time: %u\n", request_data_param->ms->alarm_source, milliseconds_g);
+      printf("\n %s alarm is being ignored. Time: %u\n", request_data_param->ms->alarm_source, milliseconds_counter_g);
       #endif
 
       free(request_data_param->ms->alarm_source);
@@ -899,7 +901,7 @@ void send_general_request(struct request_data *request_data_param, unsigned char
 
 void send_general_request_task(void *pvParameters) {
    #ifdef ALLOW_USE_PRINTF
-   printf("\n send_general_request_task has been created. Time: %u\n", milliseconds_g);
+   printf("\n send_general_request_task has been created. Time: %u\n", milliseconds_counter_g);
    #endif
 
    struct request_data *request_data_param = pvParameters;
@@ -911,7 +913,7 @@ void send_general_request_task(void *pvParameters) {
 
       if (is_alarm_being_ignored(request_data_param->ms, request_data_param->request_type)) {
          #ifdef ALLOW_USE_PRINTF
-         printf("\n %s is being ignored after timeout. Time: %u\n", request_data_param->ms->alarm_source, milliseconds_g);
+         printf("\n %s is being ignored after timeout. Time: %u\n", request_data_param->ms->alarm_source, milliseconds_counter_g);
          #endif
 
          // Alarm occurred after false alarm within interval
@@ -936,12 +938,12 @@ void send_general_request_task(void *pvParameters) {
       xSemaphoreTake(requests_mutex_g, portMAX_DELAY);
 
       #ifdef ALLOW_USE_PRINTF
-      printf("\n send_general_request_task started. Time: %u\n", milliseconds_g);
+      printf("\n send_general_request_task started. Time: %u\n", milliseconds_counter_g);
       #endif
 
       if (!read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN)) {
          #ifdef ALLOW_USE_PRINTF
-         printf("\n Can't send alarm request, because not connected to AP. Time: %u\n", milliseconds_g);
+         printf("\n Can't send alarm request, because not connected to AP. Time: %u\n", milliseconds_counter_g);
          #endif
 
          vTaskDelay(2000 / portTICK_RATE_MS);
@@ -1204,7 +1206,5 @@ void user_init(void) {
 
    xTaskCreate(send_status_requests_task, "send_status_requests_task", 256, NULL, 1, NULL);
 
-   #ifdef ALLOW_USE_PRINTF
    start_100millisecons_counter();
-   #endif
 }

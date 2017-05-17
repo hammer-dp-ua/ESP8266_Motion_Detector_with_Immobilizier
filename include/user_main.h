@@ -37,6 +37,8 @@
 #define IGNORE_IMMOBILIZER_BEEPER_SEC  300
 #define IGNORE_IMMOBILIZER_SEC         60
 
+#define MILLISECONDS_COUNTER_DIVIDER 10
+
 #define UART_RX_BUFFER_SIZE 30
 
 #define ALARM_SOURCES_AMOUNT 7
@@ -56,7 +58,8 @@ char STATUS_INFO_REQUEST_PAYLOAD[] ICACHE_RODATA_ATTR =
       "{\"gain\":\"<1>\","
       "\"deviceName\":\"<2>\","
       "\"errors\":\"<3>\","
-      "\"buildTimestamp\":\"<4>\"}";
+      "\"uptime\":\"<4>\","
+      "\"buildTimestamp\":\"<5>\"}";
 char ALARM_GET_REQUEST[] ICACHE_RODATA_ATTR =
       "GET /server/esp8266/testAlarm?alarmSource=<1> HTTP/1.1\r\n"
       "Host: <2>\r\n"
