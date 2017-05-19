@@ -31,8 +31,8 @@
 #define LONG_POLLING_REQUEST_IDLE_TIME_ON_ERROR (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define LONG_POLLING_REQUEST_MAX_DURATION_TIME  (5.5 * 60 * 1000 / portTICK_RATE_MS) // 5.5 mins
 
-#define IGNORE_ALARMS_TIMEOUT_SEC 20
-#define IGNORE_FALSE_ALARMS_TIMEOUT_SEC 10
+#define IGNORE_ALARMS_TIMEOUT_SEC 60
+#define IGNORE_FALSE_ALARMS_TIMEOUT_SEC 30
 #define IGNORE_MOTION_DETECTORS_TIMEOUT_AFTER_TURN_ON_SEC 60
 #define IGNORE_IMMOBILIZER_BEEPER_SEC  300
 #define IGNORE_IMMOBILIZER_SEC         60
@@ -61,7 +61,7 @@ char STATUS_INFO_REQUEST_PAYLOAD[] ICACHE_RODATA_ATTR =
       "\"uptime\":\"<4>\","
       "\"buildTimestamp\":\"<5>\"}";
 char ALARM_GET_REQUEST[] ICACHE_RODATA_ATTR =
-      "GET /server/esp8266/testAlarm?alarmSource=<1> HTTP/1.1\r\n"
+      "GET /server/esp8266/alarm?alarmSource=<1> HTTP/1.1\r\n"
       "Host: <2>\r\n"
       "User-Agent: ESP8266\r\n"
       "Connection: close\r\n"
