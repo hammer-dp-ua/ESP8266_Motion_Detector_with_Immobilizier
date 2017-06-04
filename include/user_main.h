@@ -27,11 +27,11 @@
 
 #define REQUEST_IDLE_TIME_ON_ERROR              (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define REQUEST_MAX_DURATION_TIME               (10 * 1000 / portTICK_RATE_MS) // 10 sec
-#define STATUS_REQUESTS_SEND_INTERVAL           (30 * 1000 / portTICK_RATE_MS) // 30 sec
+#define STATUS_REQUESTS_SEND_INTERVAL           (60 * 1000 / portTICK_RATE_MS) // 30 sec
 #define LONG_POLLING_REQUEST_IDLE_TIME_ON_ERROR (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define LONG_POLLING_REQUEST_MAX_DURATION_TIME  (5.5 * 60 * 1000 / portTICK_RATE_MS) // 5.5 mins
 
-#define IGNORE_ALARMS_TIMEOUT_SEC 60
+#define IGNORE_ALARMS_TIMEOUT_SEC 10
 #define IGNORE_FALSE_ALARMS_TIMEOUT_SEC 30
 #define IGNORE_MOTION_DETECTORS_TIMEOUT_AFTER_TURN_ON_SEC 60
 #define IGNORE_IMMOBILIZER_BEEPER_SEC  300
@@ -125,6 +125,12 @@ struct request_data {
    struct motion_sensor *ms;
    GeneralRequestType request_type;
 };
+
+#ifdef USE_MALLOC_LOGGER
+   #define FREE(allocated_address_element_to_free) free_logger(allocated_address_element_to_free)
+#else
+   #define FREE(allocated_address_element_to_free) free(allocated_address_element_to_free)
+#endif
 
 void scan_access_point_task(void *pvParameters);
 void send_long_polling_requests_task(void *pvParameters);

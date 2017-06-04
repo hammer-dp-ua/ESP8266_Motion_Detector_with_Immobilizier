@@ -1,10 +1,6 @@
 #include "esp_common.h"
-
-#ifndef true // needed only for Eclipse
-   typedef unsigned char bool;
-   #define true 1
-   #define false 0
-#endif
+#include "global_definitions.h"
+#include "malloc_logger.h"
 
 void set_flag(unsigned int *flags, unsigned int flag_value);
 void reset_flag(unsigned int *flags, unsigned int flag_value);

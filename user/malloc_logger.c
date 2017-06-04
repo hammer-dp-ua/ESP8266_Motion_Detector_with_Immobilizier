@@ -68,8 +68,12 @@ struct malloc_logger_element get_last_element_in_logger_list() {
    return malloc_logger_list[MALLOC_LOGGER_LIST_SIZE - 1];
 }
 
-/*
-static bool is_element_already_in_list(void * ) {
+void print_not_empty_elements_lines() {
+   unsigned int i;
 
+   for (i = 0; i < MALLOC_LOGGER_LIST_SIZE; i++) {
+      if (malloc_logger_list[i].allocated_element_address != NULL) {
+         printf(" element's variable line: %u\n", malloc_logger_list[i].variable_line);
+      }
+   }
 }
-*/

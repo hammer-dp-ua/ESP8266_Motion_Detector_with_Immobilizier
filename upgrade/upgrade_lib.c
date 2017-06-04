@@ -11,13 +11,7 @@
 #include "esp_common.h"
 #include "lwip/mem.h"
 #include "upgrade.h"
-#include "global_printf_usage.h"
-
-#ifndef true // needed only for Eclipse
-   typedef unsigned char bool;
-   #define true 1
-   #define false 0
-#endif
+#include "global_definitions.h"
 
 struct upgrade_param {
    uint32 fw_bin_addr; // .bin start address
@@ -83,9 +77,9 @@ LOCAL bool system_upgrade_internal(struct upgrade_param *upgrade, uint8 *data, u
          taskENTER_CRITICAL();
 
          if (OUT_OF_RANGE(upgrade->fw_bin_sec_earse)) {
-#ifdef ALLOW_USE_PRINTF
+            #ifdef ALLOW_USE_PRINTF
             printf("fw_bin_sec_earse: %d, out of range\n", upgrade->fw_bin_sec_earse);
-#endif
+            #endif
 
             break;
          } else {spi_flash_erase_sector(upgrade->fw_bin_sec_earse);
@@ -114,9 +108,9 @@ LOCAL bool system_upgrade_internal(struct upgrade_param *upgrade, uint8 *data, u
    if (upgrade->extra <= 4) {
       memcpy(upgrade->save, upgrade->buffer + len, upgrade->extra);
    } else {
-#ifdef ALLOW_USE_PRINTF
+      #ifdef ALLOW_USE_PRINTF
       printf("ERR3: arr_overflow, %u, %d\n", __LINE__, upgrade->extra);
-#endif
+      #endif
    }
 
    do {
@@ -204,9 +198,9 @@ void system_upgrade_init(void) {
 
    upgrade->fw_bin_sec = (system_upgrade_userbin_check() == USER_BIN1) ? user_bin2_start : user_bin1_start;
 
-#ifdef ALLOW_USE_PRINTF
+   #ifdef ALLOW_USE_PRINTF
    printf("%d flash sector multiplier will be used\n", upgrade->fw_bin_sec);
-#endif
+   #endif
 
    upgrade->fw_bin_addr = upgrade->fw_bin_sec * SPI_FLASH_SEC_SIZE;
    upgrade->fw_bin_sec_earse = upgrade->fw_bin_sec;

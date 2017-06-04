@@ -17,6 +17,8 @@
 
 #include "esp_sta.h"
 #include "esp_wifi.h"
+#include "global_definitions.h"
+#include "malloc_logger.h"
 #include "upgrade.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
@@ -26,7 +28,6 @@
 #include "lwip/sys.h"
 #include "lwip/inet.h"
 #include "user_main.h"
-#include "global_printf_usage.h"
 
 unsigned int milliseconds_counter_g;
 int signal_strength_g;
@@ -129,7 +130,7 @@ void scan_access_point_task(void *pvParameters) {
 
          ap_scan_config.ssid = default_access_point_name;
          wifi_station_scan(&ap_scan_config, get_ap_signal_strength);
-         free(default_access_point_name);
+         FREE(default_access_point_name);
 
          vTaskDelay(rescan_when_connected_task_delay);
       } else {
@@ -148,12 +149,6 @@ void autoconnect_task(void *pvParameters) {
          wifi_station_connect(); // Do not call this API in user_init
       }
       vTaskDelay(task_delay);
-   }
-}
-
-void ICACHE_FLASH_ATTR testing_task(void *pvParameters) {
-   for (;;) {
-      vTaskDelay(1000 / portTICK_RATE_MS);
    }
 }
 
@@ -207,7 +202,7 @@ void successfull_connected_tcp_handler_callback(void *arg) {
    //keepalive_error_code |= espconn_set_keepalive(connection, ESPCONN_KEEPCNT, &espconn_keepcnt_value);
 
    int sent_status = espconn_send(connection, request, request_length);
-   free(request);
+   FREE(request);
    user_data->request = NULL;
 
    if (sent_status != 0) {
@@ -256,7 +251,13 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
 
       if (strstr(pdata, server_sent)) {
          user_data->response_received = true;
+
+         #ifdef USE_MALLOC_LOGGER
+         char *response = malloc_logger(len, __LINE__);
+         #else
          char *response = malloc(len);
+         #endif
+
          memcpy(response, pdata, len);
          user_data->response = response;
 
@@ -264,7 +265,7 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
          printf("Response received: Time: %u\n", milliseconds_counter_g);
          #endif
       }
-      free(server_sent);
+      FREE(server_sent);
    }
 
    // Don't call this API in any espconn callback. If needed, please use system task to trigger espconn_disconnect.
@@ -309,7 +310,7 @@ void check_for_update_firmware(char *response) {
    if (strstr(response, update_firmware_json_element) != NULL) {
       set_flag(&general_flags, UPDATE_FIRMWARE_FLAG);
    }
-   free(update_firmware_json_element);
+   FREE(update_firmware_json_element);
 }
 
 void status_request_on_succeed_callback(struct espconn *connection) {
@@ -374,11 +375,11 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
    struct connection_user_data *user_data = connection->reserve;
 
    if (user_data->request != NULL) {
-      free(user_data->request);
+      FREE(user_data->request);
       user_data->request = NULL;
    }
    if (user_data->response != NULL) {
-      free(user_data->response);
+      FREE(user_data->response);
       user_data->response = NULL;
    }
 
@@ -389,7 +390,7 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
 
       vTaskDelete(user_data->timeout_request_supervisor_task);
    }
-   free(user_data);
+   FREE(user_data);
 
    char error_code = espconn_delete(connection);
    if (error_code != 0) {
@@ -397,7 +398,7 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
       printf("\n ERROR! Connection is still in progress\n");
       #endif
    }
-   free(connection);
+   FREE(connection);
 
    if (semaphores_to_give != NULL) {
       unsigned char i;
@@ -406,18 +407,28 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
          xSemaphoreGive(semaphore_to_give);
       }
    }
+
+   #if defined(ALLOW_USE_PRINTF) && defined(USE_MALLOC_LOGGER)
+   printf("\n Elements amount in malloc logger list: %u\n", get_malloc_logger_list_elements_amount());
+   print_not_empty_elements_lines();
+   printf("\n Free Heap size: %u\n", xPortGetFreeHeapSize());
+   #endif
 }
 
 bool compare_pins_names(char *activated_pin, char *rom_pin_name) {
    char *comparable_pin = get_string_from_rom(rom_pin_name);
    bool names_matched = compare_strings(activated_pin, comparable_pin);
 
-   free(comparable_pin);
+   FREE(comparable_pin);
    return names_matched;
 }
 
 void fill_motion_sensor_request_data(struct request_data *request_data, GeneralRequestType request_type, MotionSensorUnit msu, char *motion_sensor_pin) {
+   #ifdef USE_MALLOC_LOGGER
+   struct motion_sensor *ms = (struct motion_sensor *) zalloc_logger(sizeof(struct motion_sensor), __LINE__);
+   #else
    struct motion_sensor *ms = (struct motion_sensor *) zalloc(sizeof(struct motion_sensor));
+   #endif
 
    ms->unit = msu;
    ms->alarm_source = motion_sensor_pin;
@@ -434,9 +445,9 @@ void input_pins_analyzer_task(void *pvParameters) {
 
    if (found_pin_prefix == NULL) {
       #ifdef ALLOW_USE_PRINTF
-      printf("\n pin prefix is not found\n");
+      printf("\n pin prefix is not found: %s\n", activated_pin_with_prefix);
       #endif
-      free(activated_pin_with_prefix);
+      FREE(activated_pin_with_prefix);
       vTaskDelete(NULL);
    }
 
@@ -445,20 +456,29 @@ void input_pins_analyzer_task(void *pvParameters) {
       pin_name_length++;
    }
 
+   #ifdef USE_MALLOC_LOGGER
+   char *activated_pin = malloc_logger(pin_name_length + 1, __LINE__);
+   #else
    char *activated_pin = malloc(pin_name_length + 1);
+   #endif
+
    unsigned char i = 0;
 
    for (i = 0; i < pin_name_length; i++) {
       *(activated_pin + i) = *(activated_pin_with_prefix + prefix_length + i);
    }
    *(activated_pin + pin_name_length) = '\0';
-   free(activated_pin_with_prefix);
+   FREE(activated_pin_with_prefix);
 
    #ifdef ALLOW_USE_PRINTF
    printf("\n pin without prefix: %s\n", activated_pin);
    #endif
 
+   #ifdef USE_MALLOC_LOGGER
+   struct request_data *request_data_param = (struct request_data *) zalloc_logger(sizeof(struct request_data), __LINE__);
+   #else
    struct request_data *request_data_param = (struct request_data *) zalloc(sizeof(struct request_data));
+   #endif
 
    if (compare_pins_names(activated_pin, MOTION_SENSOR_1_PIN)) {
       fill_motion_sensor_request_data(request_data_param, ALARM, MOTION_SENSOR_1, activated_pin);
@@ -469,9 +489,9 @@ void input_pins_analyzer_task(void *pvParameters) {
    } else if (compare_pins_names(activated_pin, MOTION_SENSOR_3_PIN)) {
       fill_motion_sensor_request_data(request_data_param, ALARM, MOTION_SENSOR_3, activated_pin);
       send_general_request(request_data_param, 2);
-   } else if (compare_pins_names(activated_pin, PIR_LED_1_PIN) || compare_pins_names(activated_pin, MW_LED_1_PIN)) {
+   /*} else if (compare_pins_names(activated_pin, PIR_LED_1_PIN) || compare_pins_names(activated_pin, MW_LED_1_PIN)) {
       fill_motion_sensor_request_data(request_data_param, FALSE_ALARM, MOTION_SENSOR_1, activated_pin);
-      send_general_request(request_data_param, 1);
+      send_general_request(request_data_param, 1);*/
    } else if (compare_pins_names(activated_pin, PIR_LED_3_PIN) || compare_pins_names(activated_pin, MW_LED_3_PIN)) {
       fill_motion_sensor_request_data(request_data_param, FALSE_ALARM, MOTION_SENSOR_3, activated_pin);
       send_general_request(request_data_param, 1);
@@ -479,8 +499,8 @@ void input_pins_analyzer_task(void *pvParameters) {
       request_data_param->request_type = IMMOBILIZER_ACTIVATION;
       send_general_request(request_data_param, 1);
    } else {
-      free(activated_pin);
-      free(request_data_param);
+      FREE(activated_pin);
+      FREE(request_data_param);
    }
 
    vTaskDelete(NULL);
@@ -533,9 +553,9 @@ void ota_finished_callback(void *arg) {
       system_restart();
    }
 
-   free(&update->sockaddrin);
-   free(update->url);
-   free(update);
+   FREE(&update->sockaddrin);
+   FREE(update->url);
+   FREE(update);
 }
 
 void blink_leds_while_updating_task(void *pvParameters) {
@@ -562,8 +582,13 @@ void upgrade_firmware() {
 
    xTaskCreate(blink_leds_while_updating_task, "blink_leds_while_updating_task", 256, NULL, 1, NULL);
 
+   #ifdef USE_MALLOC_LOGGER
+   struct upgrade_server_info *upgrade_server = (struct upgrade_server_info *) zalloc_logger(sizeof(struct upgrade_server_info), __LINE__);
+   struct sockaddr_in *sockaddrin = (struct sockaddr_in *) zalloc_logger(sizeof(struct sockaddr_in), __LINE__);
+   #else
    struct upgrade_server_info *upgrade_server = (struct upgrade_server_info *) zalloc(sizeof(struct upgrade_server_info));
    struct sockaddr_in *sockaddrin = (struct sockaddr_in *) zalloc(sizeof(struct sockaddr_in));
+   #endif
 
    upgrade_server->sockaddrin = *sockaddrin;
    upgrade_server->sockaddrin.sin_family = AF_INET;
@@ -582,8 +607,8 @@ void upgrade_firmware() {
    char *url_parameters[] = {file_to_download, server_ip, NULL};
    char *url = set_string_parameters(url_pattern, url_parameters);
 
-   free(url_pattern);
-   free(server_ip);
+   FREE(url_pattern);
+   FREE(server_ip);
    upgrade_server->url = url;
    system_upgrade_start(upgrade_server);
 }
@@ -715,8 +740,8 @@ void send_status_requests_task(void *pvParameters) {
       char *status_info_request_payload_template = get_string_from_rom(STATUS_INFO_REQUEST_PAYLOAD);
       char *request_payload = set_string_parameters(status_info_request_payload_template, status_info_request_payload_template_parameters);
 
-      free(device_name);
-      free(status_info_request_payload_template);
+      FREE(device_name);
+      FREE(status_info_request_payload_template);
 
       char *request_template = get_string_from_rom(STATUS_INFO_POST_REQUEST);
       unsigned short request_payload_length = strnlen(request_payload, 0xFFFF);
@@ -726,16 +751,21 @@ void send_status_requests_task(void *pvParameters) {
       char *request_template_parameters[] = {request_payload_length_string, server_ip_address, request_payload, NULL};
       char *request = set_string_parameters(request_template, request_template_parameters);
 
-      free(request_payload);
-      free(request_template);
-      free(server_ip_address);
+      FREE(request_payload);
+      FREE(request_template);
+      FREE(server_ip_address);
 
       #ifdef ALLOW_USE_PRINTF
       printf("Request created:\n<<<\n%s>>>\n", request);
       #endif
 
+      #ifdef USE_MALLOC_LOGGER
+      struct espconn *connection = (struct espconn *) zalloc_logger(sizeof(struct espconn), __LINE__);
+      struct connection_user_data *user_data = (struct connection_user_data *) zalloc_logger(sizeof(struct connection_user_data), __LINE__);
+      #else
       struct espconn *connection = (struct espconn *) zalloc(sizeof(struct espconn));
       struct connection_user_data *user_data = (struct connection_user_data *) zalloc(sizeof(struct connection_user_data));
+      #endif
 
       user_data->response_received = false;
       user_data->timeout_request_supervisor_task = NULL;
@@ -769,7 +799,7 @@ void send_status_requests_task(void *pvParameters) {
 
 bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request_type) {
    if (ms == NULL) {
-      return false;
+      return true;
    }
 
    unsigned char i;
@@ -777,11 +807,13 @@ bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request
    for (i = 0; i < ALARM_SOURCES_AMOUNT; i++) {
       struct motion_sensor *found_motion_sensor = alarm_sources_g[i];
 
-      if (found_motion_sensor != NULL && request_type == ALARM &&
-            found_motion_sensor->unit == ms->unit && strcmp(found_motion_sensor->alarm_source, ms->alarm_source) == 0) {
+      if (found_motion_sensor == NULL) {
+         continue;
+      }
+
+      if (request_type == ALARM && found_motion_sensor->unit == ms->unit && strcmp(found_motion_sensor->alarm_source, ms->alarm_source) == 0) {
          return true;
-      } else if (found_motion_sensor != NULL && request_type == FALSE_ALARM &&
-            found_motion_sensor->unit == ms->unit) {
+      } else if (request_type == FALSE_ALARM && found_motion_sensor->unit == ms->unit) {
          // Because of this "false alarm" will be ignored even when "alarm" is being ignored if "alarm" timeout is longer than "false alarm" timeout
          return true;
       }
@@ -831,8 +863,8 @@ void stop_ignoring_alarm(xTimerHandle xTimer) {
          printf("\n %s is being deleted from Alarm Sources. Time: %u\n", found_motion_sensor->alarm_source, milliseconds_counter_g);
          #endif
 
-         free(found_motion_sensor->alarm_source);
-         free(found_motion_sensor);
+         FREE(found_motion_sensor->alarm_source);
+         FREE(found_motion_sensor);
          alarm_sources_g[i] = NULL;
          break;
       }
@@ -840,8 +872,8 @@ void stop_ignoring_alarm(xTimerHandle xTimer) {
 
    for (i = 0; i < ALARM_TIMERS_MAX_AMOUNT; i++) {
       if (alarm_timers_g[i] == xTimer) {
-         alarm_timers_g[i] = NULL;
          xTimerDelete(xTimer, 0);
+         alarm_timers_g[i] = NULL;
          break;
       }
    }
@@ -850,10 +882,10 @@ void stop_ignoring_alarm(xTimerHandle xTimer) {
 void send_general_request(struct request_data *request_data_param, unsigned char task_priority) {
    if (read_flag(general_flags, IGNORE_MOTION_DETECTORS_FLAG) || read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
       if (request_data_param->ms != NULL) {
-         free(request_data_param->ms->alarm_source);
-         free(request_data_param->ms);
+         FREE(request_data_param->ms->alarm_source);
+         FREE(request_data_param->ms);
       }
-      free(request_data_param);
+      FREE(request_data_param);
       return;
    }
 
@@ -863,15 +895,15 @@ void send_general_request(struct request_data *request_data_param, unsigned char
       printf("\n %s alarm is being ignored. Time: %u\n", request_data_param->ms->alarm_source, milliseconds_counter_g);
       #endif
 
-      free(request_data_param->ms->alarm_source);
-      free(request_data_param->ms);
-      free(request_data_param);
+      FREE(request_data_param->ms->alarm_source);
+      FREE(request_data_param->ms);
+      FREE(request_data_param);
       return;
    }
 
    if (request_data_param->request_type == IMMOBILIZER_ACTIVATION) {
       if (read_flag(general_flags, IGNORE_IMMOBILIZER_FLAG)) {
-         free(request_data_param);
+         FREE(request_data_param);
          return;
       }
 
@@ -911,9 +943,9 @@ void send_general_request_task(void *pvParameters) {
          #endif
 
          // Alarm occurred after false alarm within interval
-         free(request_data_param->ms->alarm_source);
-         free(request_data_param->ms);
-         free(request_data_param);
+         FREE(request_data_param->ms->alarm_source);
+         FREE(request_data_param->ms);
+         FREE(request_data_param);
          vTaskDelete(NULL);
       }
 
@@ -927,6 +959,8 @@ void send_general_request_task(void *pvParameters) {
    if (alarm_source_length > 0) {
       memcpy(alarm_source, request_data_param->ms->alarm_source, alarm_source_length);
    }
+
+   FREE(request_data_param);
 
    for (;;) {
       xSemaphoreTake(requests_mutex_g, portMAX_DELAY);
@@ -968,15 +1002,20 @@ void send_general_request_task(void *pvParameters) {
          request = set_string_parameters(request_template, request_template_parameters);
       }
 
-      free(request_template);
-      free(server_ip_address);
+      FREE(request_template);
+      FREE(server_ip_address);
 
       #ifdef ALLOW_USE_PRINTF
       printf("\n Request created:\n<<<\n%s>>>\n", request);
       #endif
 
+      #ifdef USE_MALLOC_LOGGER
+      struct espconn *connection = (struct espconn *) zalloc_logger(sizeof(struct espconn), __LINE__);
+      struct connection_user_data *user_data = (struct connection_user_data *) zalloc_logger(sizeof(struct connection_user_data), __LINE__);
+      #else
       struct espconn *connection = (struct espconn *) zalloc(sizeof(struct espconn));
       struct connection_user_data *user_data = (struct connection_user_data *) zalloc(sizeof(struct connection_user_data));
+      #endif
 
       user_data->response_received = false;
       user_data->timeout_request_supervisor_task = NULL;
@@ -1048,8 +1087,8 @@ void set_default_wi_fi_settings() {
       memcpy(&station_config_settings_to_save.password, default_access_point_password, 64);
       wifi_station_set_config(&station_config_settings_to_save);
    }
-   free(default_access_point_name);
-   free(default_access_point_password);
+   FREE(default_access_point_name);
+   FREE(default_access_point_password);
 
    struct ip_info current_ip_info;
    wifi_get_ip_info(STATION_IF, &current_ip_info);
@@ -1065,11 +1104,11 @@ void set_default_wi_fi_settings() {
       ip_info_to_set.netmask.addr = ipaddr_addr(own_netmask);
       ip_info_to_set.gw.addr = ipaddr_addr(own_getaway_address);
       wifi_set_ip_info(STATION_IF, &ip_info_to_set);
-      free(own_netmask);
-      free(own_getaway_address);
+      FREE(own_netmask);
+      FREE(own_getaway_address);
    }
-   free(current_ip);
-   free(own_ip_address);
+   FREE(current_ip);
+   FREE(own_ip_address);
 }
 
 void pins_config() {
@@ -1109,6 +1148,10 @@ void uart_config() {
 }
 
 void uart_rx_intr_handler(void *params) {
+   #ifdef ALLOW_USE_PRINTF
+   printf("uart_rx_intr_handler\n");
+   #endif
+
    char received_character;
 
    unsigned int uart_intr_status = READ_PERI_REG(UART_INT_ST(UART0));
@@ -1129,7 +1172,12 @@ void uart_rx_intr_handler(void *params) {
       } else if (UART_RXFIFO_TOUT_INT_ST == (uart_intr_status & UART_RXFIFO_TOUT_INT_ST)) {
          unsigned char buf_idx = 0;
          unsigned char fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
+
+         #ifdef USE_MALLOC_LOGGER
+         char *received_data = malloc_logger(fifo_len + 1, __LINE__);
+         #else
          char *received_data = malloc(fifo_len + 1);
+         #endif
 
          while (buf_idx < fifo_len) {
             received_character = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
@@ -1176,9 +1224,15 @@ bool are_motion_sensors_turned_on() {
    return read_output_pin_state(MOTION_SENSORS_ENABLE_PIN);
 }
 
-void user_init(void) {
-   start_100millisecons_counter();
+void testing_task(void *pvParameters) {
+   for (;;) {
+      xTaskCreate(input_pins_analyzer_task, "input_pins_analyzer_task", 256, "pin:MOTION_SENSOR_2", 1, NULL);
 
+      vTaskDelay(5000 / portTICK_RATE_MS);
+   }
+}
+
+void user_init(void) {
    pins_config();
    turn_motion_sensors_off();
    uart_config();
@@ -1201,4 +1255,7 @@ void user_init(void) {
    requests_mutex_g = xSemaphoreCreateMutex();
 
    xTaskCreate(send_status_requests_task, "send_status_requests_task", 256, NULL, 1, NULL);
+   //xTaskCreate(testing_task, "testing_task", 200, NULL, 1, NULL);
+
+   start_100millisecons_counter();
 }

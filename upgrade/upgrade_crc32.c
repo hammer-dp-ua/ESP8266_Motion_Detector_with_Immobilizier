@@ -11,13 +11,7 @@
 #include "lwip/ip_addr.h"
 #include "lwip/mem.h"
 #include <stdlib.h>
-#include "global_printf_usage.h"
-
-#ifndef true // needed only for Eclipse
-   typedef unsigned char bool;
-   #define true 1
-   #define false 0
-#endif
+#include "global_definitions.h"
 
 #define BUFSIZE     512
 #define CRC_BLOCK_SIZE 512
