@@ -1,5 +1,7 @@
 #include "malloc_logger.h"
 
+#ifdef MALLOC_LOGGER
+
 struct malloc_logger_element malloc_logger_list[MALLOC_LOGGER_LIST_SIZE];
 
 void *zalloc_logger(unsigned int element_size, unsigned int variable_line) {
@@ -77,3 +79,5 @@ void print_not_empty_elements_lines() {
       }
    }
 }
+
+#endif
