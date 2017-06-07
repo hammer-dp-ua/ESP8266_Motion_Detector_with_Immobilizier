@@ -252,11 +252,7 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
       if (strstr(pdata, server_sent)) {
          user_data->response_received = true;
 
-         #ifdef USE_MALLOC_LOGGER
-         char *response = malloc_logger(len, __LINE__);
-         #else
-         char *response = malloc(len);
-         #endif
+         char *response = MALLOC(len, __LINE__);
 
          memcpy(response, pdata, len);
          user_data->response = response;
@@ -424,11 +420,7 @@ bool compare_pins_names(char *activated_pin, char *rom_pin_name) {
 }
 
 void fill_motion_sensor_request_data(struct request_data *request_data, GeneralRequestType request_type, MotionSensorUnit msu, char *motion_sensor_pin) {
-   #ifdef USE_MALLOC_LOGGER
-   struct motion_sensor *ms = (struct motion_sensor *) zalloc_logger(sizeof(struct motion_sensor), __LINE__);
-   #else
-   struct motion_sensor *ms = (struct motion_sensor *) zalloc(sizeof(struct motion_sensor));
-   #endif
+   struct motion_sensor *ms = (struct motion_sensor *) ZALLOC(sizeof(struct motion_sensor), __LINE__);
 
    ms->unit = msu;
    ms->alarm_source = motion_sensor_pin;
@@ -456,11 +448,7 @@ void input_pins_analyzer_task(void *pvParameters) {
       pin_name_length++;
    }
 
-   #ifdef USE_MALLOC_LOGGER
-   char *activated_pin = malloc_logger(pin_name_length + 1, __LINE__);
-   #else
-   char *activated_pin = malloc(pin_name_length + 1);
-   #endif
+   char *activated_pin = MALLOC(pin_name_length + 1, __LINE__);
 
    unsigned char i = 0;
 
@@ -474,11 +462,7 @@ void input_pins_analyzer_task(void *pvParameters) {
    printf("\n pin without prefix: %s\n", activated_pin);
    #endif
 
-   #ifdef USE_MALLOC_LOGGER
-   struct request_data *request_data_param = (struct request_data *) zalloc_logger(sizeof(struct request_data), __LINE__);
-   #else
-   struct request_data *request_data_param = (struct request_data *) zalloc(sizeof(struct request_data));
-   #endif
+   struct request_data *request_data_param = (struct request_data *) ZALLOC(sizeof(struct request_data), __LINE__);
 
    if (compare_pins_names(activated_pin, MOTION_SENSOR_1_PIN)) {
       fill_motion_sensor_request_data(request_data_param, ALARM, MOTION_SENSOR_1, activated_pin);
@@ -582,13 +566,8 @@ void upgrade_firmware() {
 
    xTaskCreate(blink_leds_while_updating_task, "blink_leds_while_updating_task", 256, NULL, 1, NULL);
 
-   #ifdef USE_MALLOC_LOGGER
-   struct upgrade_server_info *upgrade_server = (struct upgrade_server_info *) zalloc_logger(sizeof(struct upgrade_server_info), __LINE__);
-   struct sockaddr_in *sockaddrin = (struct sockaddr_in *) zalloc_logger(sizeof(struct sockaddr_in), __LINE__);
-   #else
-   struct upgrade_server_info *upgrade_server = (struct upgrade_server_info *) zalloc(sizeof(struct upgrade_server_info));
-   struct sockaddr_in *sockaddrin = (struct sockaddr_in *) zalloc(sizeof(struct sockaddr_in));
-   #endif
+   struct upgrade_server_info *upgrade_server = (struct upgrade_server_info *) ZALLOC(sizeof(struct upgrade_server_info), __LINE__);
+   struct sockaddr_in *sockaddrin = (struct sockaddr_in *) ZALLOC(sizeof(struct sockaddr_in), __LINE__);
 
    upgrade_server->sockaddrin = *sockaddrin;
    upgrade_server->sockaddrin.sin_family = AF_INET;
@@ -759,13 +738,8 @@ void send_status_requests_task(void *pvParameters) {
       printf("Request created:\n<<<\n%s>>>\n", request);
       #endif
 
-      #ifdef USE_MALLOC_LOGGER
-      struct espconn *connection = (struct espconn *) zalloc_logger(sizeof(struct espconn), __LINE__);
-      struct connection_user_data *user_data = (struct connection_user_data *) zalloc_logger(sizeof(struct connection_user_data), __LINE__);
-      #else
-      struct espconn *connection = (struct espconn *) zalloc(sizeof(struct espconn));
-      struct connection_user_data *user_data = (struct connection_user_data *) zalloc(sizeof(struct connection_user_data));
-      #endif
+      struct espconn *connection = (struct espconn *) ZALLOC(sizeof(struct espconn), __LINE__);
+      struct connection_user_data *user_data = (struct connection_user_data *) ZALLOC(sizeof(struct connection_user_data), __LINE__);
 
       user_data->response_received = false;
       user_data->timeout_request_supervisor_task = NULL;
@@ -1009,13 +983,8 @@ void send_general_request_task(void *pvParameters) {
       printf("\n Request created:\n<<<\n%s>>>\n", request);
       #endif
 
-      #ifdef USE_MALLOC_LOGGER
-      struct espconn *connection = (struct espconn *) zalloc_logger(sizeof(struct espconn), __LINE__);
-      struct connection_user_data *user_data = (struct connection_user_data *) zalloc_logger(sizeof(struct connection_user_data), __LINE__);
-      #else
-      struct espconn *connection = (struct espconn *) zalloc(sizeof(struct espconn));
-      struct connection_user_data *user_data = (struct connection_user_data *) zalloc(sizeof(struct connection_user_data));
-      #endif
+      struct espconn *connection = (struct espconn *) ZALLOC(sizeof(struct espconn), __LINE__);
+      struct connection_user_data *user_data = (struct connection_user_data *) ZALLOC(sizeof(struct connection_user_data), __LINE__);
 
       user_data->response_received = false;
       user_data->timeout_request_supervisor_task = NULL;
@@ -1173,11 +1142,7 @@ void uart_rx_intr_handler(void *params) {
          unsigned char buf_idx = 0;
          unsigned char fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
 
-         #ifdef USE_MALLOC_LOGGER
-         char *received_data = malloc_logger(fifo_len + 1, __LINE__);
-         #else
-         char *received_data = malloc(fifo_len + 1);
-         #endif
+         char *received_data = MALLOC(fifo_len + 1, __LINE__);
 
          while (buf_idx < fifo_len) {
             received_character = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;

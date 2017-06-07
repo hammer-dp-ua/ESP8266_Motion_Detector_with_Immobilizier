@@ -1,6 +1,16 @@
 #include "esp_common.h"
 #include "global_definitions.h"
 
+#ifdef USE_MALLOC_LOGGER
+   #define FREE(allocated_address_element_to_free)    free_logger(allocated_address_element_to_free)
+   #define MALLOC(element_length, line_no)            malloc_logger(element_length, line_no)
+   #define ZALLOC(element_length, line_no)            zalloc_logger(element_length, line_no)
+#else
+   #define FREE(allocated_address_element_to_free) free(allocated_address_element_to_free)
+   #define MALLOC(element_length, line_no)         malloc(element_length)
+   #define ZALLOC(element_length, line_no)         zalloc(element_length)
+#endif
+
 #ifndef MALLOC_LOGGER
 #define MALLOC_LOGGER
 

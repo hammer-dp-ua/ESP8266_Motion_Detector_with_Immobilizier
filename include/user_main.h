@@ -124,12 +124,6 @@ struct request_data {
    GeneralRequestType request_type;
 };
 
-#ifdef USE_MALLOC_LOGGER
-   #define FREE(allocated_address_element_to_free) free_logger(allocated_address_element_to_free)
-#else
-   #define FREE(allocated_address_element_to_free) free(allocated_address_element_to_free)
-#endif
-
 void scan_access_point_task(void *pvParameters);
 void send_long_polling_requests_task(void *pvParameters);
 void autoconnect_task(void *pvParameters);
