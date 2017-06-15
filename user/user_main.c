@@ -252,7 +252,7 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
       if (strstr(pdata, server_sent)) {
          user_data->response_received = true;
 
-         char *response = MALLOC(len, __LINE__);
+         char *response = MALLOC(len, __LINE__, milliseconds_counter_g);
 
          memcpy(response, pdata, len);
          user_data->response = response;
@@ -420,7 +420,7 @@ bool compare_pins_names(char *activated_pin, char *rom_pin_name) {
 }
 
 void fill_motion_sensor_request_data(struct request_data *request_data, GeneralRequestType request_type, MotionSensorUnit msu, char *motion_sensor_pin) {
-   struct motion_sensor *ms = (struct motion_sensor *) ZALLOC(sizeof(struct motion_sensor), __LINE__);
+   struct motion_sensor *ms = (struct motion_sensor *) ZALLOC(sizeof(struct motion_sensor), __LINE__, milliseconds_counter_g);
 
    ms->unit = msu;
    ms->alarm_source = motion_sensor_pin;
@@ -448,7 +448,7 @@ void input_pins_analyzer_task(void *pvParameters) {
       pin_name_length++;
    }
 
-   char *activated_pin = MALLOC(pin_name_length + 1, __LINE__);
+   char *activated_pin = MALLOC(pin_name_length + 1, __LINE__, milliseconds_counter_g);
 
    unsigned char i = 0;
 
@@ -462,7 +462,7 @@ void input_pins_analyzer_task(void *pvParameters) {
    printf("\n pin without prefix: %s\n", activated_pin);
    #endif
 
-   struct request_data *request_data_param = (struct request_data *) ZALLOC(sizeof(struct request_data), __LINE__);
+   struct request_data *request_data_param = (struct request_data *) ZALLOC(sizeof(struct request_data), __LINE__, milliseconds_counter_g);
 
    if (compare_pins_names(activated_pin, MOTION_SENSOR_1_PIN)) {
       fill_motion_sensor_request_data(request_data_param, ALARM, MOTION_SENSOR_1, activated_pin);
@@ -480,6 +480,7 @@ void input_pins_analyzer_task(void *pvParameters) {
       fill_motion_sensor_request_data(request_data_param, FALSE_ALARM, MOTION_SENSOR_3, activated_pin);
       send_general_request(request_data_param, 1);
    } else if (compare_pins_names(activated_pin, IMMOBILIZER_LED_PIN)) {
+      FREE(activated_pin);
       request_data_param->request_type = IMMOBILIZER_ACTIVATION;
       send_general_request(request_data_param, 1);
    } else {
@@ -566,8 +567,9 @@ void upgrade_firmware() {
 
    xTaskCreate(blink_leds_while_updating_task, "blink_leds_while_updating_task", 256, NULL, 1, NULL);
 
-   struct upgrade_server_info *upgrade_server = (struct upgrade_server_info *) ZALLOC(sizeof(struct upgrade_server_info), __LINE__);
-   struct sockaddr_in *sockaddrin = (struct sockaddr_in *) ZALLOC(sizeof(struct sockaddr_in), __LINE__);
+   struct upgrade_server_info *upgrade_server =
+         (struct upgrade_server_info *) ZALLOC(sizeof(struct upgrade_server_info), __LINE__, milliseconds_counter_g);
+   struct sockaddr_in *sockaddrin = (struct sockaddr_in *) ZALLOC(sizeof(struct sockaddr_in), __LINE__, milliseconds_counter_g);
 
    upgrade_server->sockaddrin = *sockaddrin;
    upgrade_server->sockaddrin.sin_family = AF_INET;
@@ -710,12 +712,15 @@ void send_status_requests_task(void *pvParameters) {
       sprintf(signal_strength, "%d", signal_strength_g);
       char *device_name = get_string_from_rom(DEVICE_NAME);
       char errors_counter[5];
-      sprintf(errors_counter, "%d", errors_counter_g);
+      sprintf(errors_counter, "%u", errors_counter_g);
       char uptime[10];
-      sprintf(uptime, "%d", milliseconds_counter_g / MILLISECONDS_COUNTER_DIVIDER);
+      sprintf(uptime, "%u", milliseconds_counter_g / MILLISECONDS_COUNTER_DIVIDER);
       char build_timestamp[30];
       sprintf(build_timestamp, "%s", __TIMESTAMP__);
-      char *status_info_request_payload_template_parameters[] = {signal_strength, device_name, errors_counter, uptime, build_timestamp, NULL};
+      char free_heap_space[6];
+      sprintf(free_heap_space, "%u", xPortGetFreeHeapSize());
+      char *status_info_request_payload_template_parameters[] =
+            {signal_strength, device_name, errors_counter, uptime, build_timestamp, free_heap_space, NULL};
       char *status_info_request_payload_template = get_string_from_rom(STATUS_INFO_REQUEST_PAYLOAD);
       char *request_payload = set_string_parameters(status_info_request_payload_template, status_info_request_payload_template_parameters);
 
@@ -738,8 +743,9 @@ void send_status_requests_task(void *pvParameters) {
       printf("Request created:\n<<<\n%s>>>\n", request);
       #endif
 
-      struct espconn *connection = (struct espconn *) ZALLOC(sizeof(struct espconn), __LINE__);
-      struct connection_user_data *user_data = (struct connection_user_data *) ZALLOC(sizeof(struct connection_user_data), __LINE__);
+      struct espconn *connection = (struct espconn *) ZALLOC(sizeof(struct espconn), __LINE__, milliseconds_counter_g);
+      struct connection_user_data *user_data =
+            (struct connection_user_data *) ZALLOC(sizeof(struct connection_user_data), __LINE__, milliseconds_counter_g);
 
       user_data->response_received = false;
       user_data->timeout_request_supervisor_task = NULL;
@@ -855,6 +861,10 @@ void stop_ignoring_alarm(xTimerHandle xTimer) {
 
 void send_general_request(struct request_data *request_data_param, unsigned char task_priority) {
    if (read_flag(general_flags, IGNORE_MOTION_DETECTORS_FLAG) || read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
+      #ifdef ALLOW_USE_PRINTF
+      printf("\n General request sending is being ignored. Flags: %u. Time: %u\n", general_flags, milliseconds_counter_g);
+      #endif
+
       if (request_data_param->ms != NULL) {
          FREE(request_data_param->ms->alarm_source);
          FREE(request_data_param->ms);
@@ -983,8 +993,9 @@ void send_general_request_task(void *pvParameters) {
       printf("\n Request created:\n<<<\n%s>>>\n", request);
       #endif
 
-      struct espconn *connection = (struct espconn *) ZALLOC(sizeof(struct espconn), __LINE__);
-      struct connection_user_data *user_data = (struct connection_user_data *) ZALLOC(sizeof(struct connection_user_data), __LINE__);
+      struct espconn *connection = (struct espconn *) ZALLOC(sizeof(struct espconn), __LINE__, milliseconds_counter_g);
+      struct connection_user_data *user_data =
+            (struct connection_user_data *) ZALLOC(sizeof(struct connection_user_data), __LINE__, milliseconds_counter_g);
 
       user_data->response_received = false;
       user_data->timeout_request_supervisor_task = NULL;
@@ -1113,6 +1124,7 @@ void uart_config() {
 
    UART_SetPrintPort(UART0);
    UART_intr_handler_register(uart_rx_intr_handler, NULL);
+   WRITE_PERI_REG(UART_INT_CLR(UART0), 0xFFFF); // clear all interrupt
    ETS_UART_INTR_ENABLE();
 }
 
@@ -1127,8 +1139,16 @@ void uart_rx_intr_handler(void *params) {
 
    while (uart_intr_status != 0x0) {
       if (UART_FRM_ERR_INT_ST == (uart_intr_status & UART_FRM_ERR_INT_ST)) {
+         #ifdef ALLOW_USE_PRINTF
+         printf(" error\n");
+         #endif
+
          WRITE_PERI_REG(UART_INT_CLR(UART0), UART_FRM_ERR_INT_CLR);
       } else if (UART_RXFIFO_FULL_INT_ST == (uart_intr_status & UART_RXFIFO_FULL_INT_ST)) {
+         #ifdef ALLOW_USE_PRINTF
+         printf(" RX FIFO full\n");
+         #endif
+
          unsigned char buf_idx = 0;
          unsigned char fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
 
@@ -1142,7 +1162,11 @@ void uart_rx_intr_handler(void *params) {
          unsigned char buf_idx = 0;
          unsigned char fifo_len = (READ_PERI_REG(UART_STATUS(UART0)) >> UART_RXFIFO_CNT_S) & UART_RXFIFO_CNT;
 
-         char *received_data = MALLOC(fifo_len + 1, __LINE__);
+         #ifdef ALLOW_USE_PRINTF
+         printf(" RX FIFO timeout. Length: %u\n", fifo_len);
+         #endif
+
+         char *received_data = MALLOC(fifo_len + 1, __LINE__, milliseconds_counter_g);
 
          while (buf_idx < fifo_len) {
             received_character = READ_PERI_REG(UART_FIFO(UART0)) & 0xFF;
@@ -1159,7 +1183,11 @@ void uart_rx_intr_handler(void *params) {
 
          WRITE_PERI_REG(UART_INT_CLR(UART0), UART_RXFIFO_TOUT_INT_CLR);
       } else {
-         //skip
+         #ifdef ALLOW_USE_PRINTF
+         printf(" Some else USART RX event. Status: %u\n", uart_intr_status);
+         #endif
+
+         WRITE_PERI_REG(UART_INT_CLR(UART0), 0xFFFF);
       }
 
       uart_intr_status = READ_PERI_REG(UART_INT_ST(UART0));

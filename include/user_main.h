@@ -55,9 +55,10 @@ char STATUS_INFO_POST_REQUEST[] ICACHE_RODATA_ATTR =
 char STATUS_INFO_REQUEST_PAYLOAD[] ICACHE_RODATA_ATTR =
       "{\"gain\":\"<1>\","
       "\"deviceName\":\"<2>\","
-      "\"errors\":\"<3>\","
-      "\"uptime\":\"<4>\","
-      "\"buildTimestamp\":\"<5>\"}";
+      "\"errors\":<3>,"
+      "\"uptime\":<4>,"
+      "\"buildTimestamp\":\"<5>\","
+      "\"freeHeapSpace\":<6>}";
 char ALARM_GET_REQUEST[] ICACHE_RODATA_ATTR =
       "GET /server/esp8266/alarm?alarmSource=<1> HTTP/1.1\r\n"
       "Host: <2>\r\n"

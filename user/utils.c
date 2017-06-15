@@ -60,7 +60,7 @@ void *set_string_parameters(char string[], char *parameters[]) {
    // 1 is for the last \0 character
    result_string_length++;
 
-   char *allocated_result = MALLOC(result_string_length, __LINE__); // (string_length + 1) * sizeof(char)
+   char *allocated_result = MALLOC(result_string_length, __LINE__, 0xFFFFFFFF); // (string_length + 1) * sizeof(char)
 
    if (allocated_result == NULL) {
       return NULL;
@@ -201,7 +201,7 @@ char *get_string_from_rom(const char *rom_string) {
       return NULL;
    }
 
-   char *result = MALLOC(string_length + 1, __LINE__); // 1 for the last empty character
+   char *result = MALLOC(string_length + 1, __LINE__, 0xFFFFFFFF); // 1 for the last empty character
 
    calculate_rom_string_length_or_fill_malloc(&string_length, result, rom_string);
    return result;
