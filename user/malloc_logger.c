@@ -7,7 +7,7 @@ struct malloc_logger_element malloc_logger_list[MALLOC_LOGGER_LIST_SIZE];
 LOCAL void check_is_full(unsigned char current_amount) {
    #ifdef ALLOW_USE_PRINTF
    if (current_amount >= MALLOC_LOGGER_LIST_SIZE) {
-      printf("\n malloc_logger_list is full\n");
+      printf("\n !malloc_logger_list is full\n");
    }
    #endif
 }

@@ -708,24 +708,59 @@ void send_status_requests_task(void *pvParameters) {
          continue;
       }
 
-      char signal_strength[4];
-      sprintf(signal_strength, "%d", signal_strength_g);
+      char signal_strength[5];
+      snprintf(signal_strength, 5, "%d", signal_strength_g);
       char *device_name = get_string_from_rom(DEVICE_NAME);
-      char errors_counter[5];
-      sprintf(errors_counter, "%u", errors_counter_g);
-      char uptime[10];
-      sprintf(uptime, "%u", milliseconds_counter_g / MILLISECONDS_COUNTER_DIVIDER);
+      char errors_counter[6];
+      snprintf(errors_counter, 6, "%u", errors_counter_g);
+      char uptime[11];
+      snprintf(uptime, 11, "%u", milliseconds_counter_g / MILLISECONDS_COUNTER_DIVIDER);
       char build_timestamp[30];
-      sprintf(build_timestamp, "%s", __TIMESTAMP__);
-      char free_heap_space[6];
-      sprintf(free_heap_space, "%u", xPortGetFreeHeapSize());
+      snprintf(build_timestamp, 30, "%s", __TIMESTAMP__);
+      char free_heap_space[7];
+      snprintf(free_heap_space, 7, "%u", xPortGetFreeHeapSize());
+      char *reset_reason = "";
+
+      if (!read_flag(general_flags, FIRST_STATUS_INFO_SENT_FLAG)) {
+         set_flag(&general_flags, FIRST_STATUS_INFO_SENT_FLAG);
+
+         struct rst_info *rst_info = system_get_rst_info();
+         char reason[2];
+         snprintf(reason, 2, "%u", rst_info->reason);
+         char cause[3];
+         snprintf(cause, 3, "%u", rst_info->exccause);
+         char epc_1[11];
+         snprintf(epc_1, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->epc1);
+         char epc_2[11];
+         snprintf(epc_2, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->epc2);
+         char epc_3[11];
+         snprintf(epc_3, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->epc3);
+         char excvaddr[11];
+         snprintf(excvaddr, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->excvaddr);
+         char depc[11];
+         snprintf(depc, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->depc);
+         char rtn_addr[11];
+         snprintf(rtn_addr, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->rtn_addr);
+         char rtc_time[11];
+         snprintf(rtc_time, 11, "%u", system_get_rtc_time());
+         char *used_software = system_upgrade_userbin_check() ? "user2.bin" : "user1.bin";
+
+         char *reset_reason_template = get_string_from_rom(RESET_REASON);
+         char *reset_reason_template_parameters[] = {reason, cause, epc_1, epc_2, epc_3, excvaddr, depc, rtn_addr, rtc_time, used_software, NULL};
+         reset_reason = set_string_parameters(reset_reason_template, reset_reason_template_parameters);
+         FREE(reset_reason_template);
+      }
+
       char *status_info_request_payload_template_parameters[] =
-            {signal_strength, device_name, errors_counter, uptime, build_timestamp, free_heap_space, NULL};
+            {signal_strength, device_name, errors_counter, uptime, build_timestamp, free_heap_space, reset_reason, NULL};
       char *status_info_request_payload_template = get_string_from_rom(STATUS_INFO_REQUEST_PAYLOAD);
       char *request_payload = set_string_parameters(status_info_request_payload_template, status_info_request_payload_template_parameters);
 
       FREE(device_name);
       FREE(status_info_request_payload_template);
+      if (strlen(reset_reason) > 1) {
+         FREE(reset_reason);
+      }
 
       char *request_template = get_string_from_rom(STATUS_INFO_POST_REQUEST);
       unsigned short request_payload_length = strnlen(request_payload, 0xFFFF);
@@ -778,7 +813,7 @@ void send_status_requests_task(void *pvParameters) {
 }
 
 bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request_type) {
-   if (ms == NULL) {
+   if (ms == NULL || read_flag(general_flags, IGNORE_MOTION_DETECTORS_FLAG)) {
       return true;
    }
 
@@ -860,11 +895,7 @@ void stop_ignoring_alarm(xTimerHandle xTimer) {
 }
 
 void send_general_request(struct request_data *request_data_param, unsigned char task_priority) {
-   if (read_flag(general_flags, IGNORE_MOTION_DETECTORS_FLAG) || read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
-      #ifdef ALLOW_USE_PRINTF
-      printf("\n General request sending is being ignored. Flags: %u. Time: %u\n", general_flags, milliseconds_counter_g);
-      #endif
-
+   if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
       if (request_data_param->ms != NULL) {
          FREE(request_data_param->ms->alarm_source);
          FREE(request_data_param->ms);
@@ -888,6 +919,11 @@ void send_general_request(struct request_data *request_data_param, unsigned char
    if (request_data_param->request_type == IMMOBILIZER_ACTIVATION) {
       if (read_flag(general_flags, IGNORE_IMMOBILIZER_FLAG)) {
          FREE(request_data_param);
+
+         #ifdef ALLOW_USE_PRINTF
+         printf(" Immobilizer is being ignored. Time: %u\n", milliseconds_counter_g);
+         #endif
+
          return;
       }
 
