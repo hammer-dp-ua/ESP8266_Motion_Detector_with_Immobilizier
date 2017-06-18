@@ -43,8 +43,6 @@
 #define ALARM_SOURCES_AMOUNT 7
 #define ALARM_TIMERS_MAX_AMOUNT 5 // 3 alarms + 2 false alarms
 
-#define HEXADECIMAL_ADDRESS_FORMAT "%08x"
-
 char RESPONSE_SERVER_SENT_OK[] ICACHE_RODATA_ATTR = "\"statusCode\":\"OK\"";
 char STATUS_INFO_POST_REQUEST[] ICACHE_RODATA_ATTR =
       "POST /server/esp8266/statusInfo HTTP/1.1\r\n"
@@ -63,11 +61,6 @@ char STATUS_INFO_REQUEST_PAYLOAD[] ICACHE_RODATA_ATTR =
       "\"buildTimestamp\":\"<5>\","
       "\"freeHeapSpace\":<6>,"
       "\"resetReason\":\"<7>\"}";
-char RESET_REASON[] ICACHE_RODATA_ATTR = " <1> (see rst_reason enum)\\n"
-      " Fatal exception (<2>):\\n"
-      " epc1=0x<3>, epc2=0x<4>, epc3=0x<5>, excvaddr=0x<6>, depc=0x<7>, rtn_addr=0x<8>\\n"
-      " RTC time: <9>\\n"
-      " used software: <10>";
 char ALARM_GET_REQUEST[] ICACHE_RODATA_ATTR =
       "GET /server/esp8266/alarm?alarmSource=<1> HTTP/1.1\r\n"
       "Host: <2>\r\n"

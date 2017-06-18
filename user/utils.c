@@ -229,6 +229,85 @@ bool compare_strings(char *string1, char *string2) {
    return result;
 }
 
+char *generate_reset_reason() {
+   struct rst_info *rst_info = system_get_rst_info();
+   char reason[2];
+   snprintf(reason, 2, "%u", rst_info->reason);
+   char cause[3];
+   snprintf(cause, 3, "%u", rst_info->exccause);
+   char epc_1[11];
+   snprintf(epc_1, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->epc1);
+   char epc_2[11];
+   snprintf(epc_2, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->epc2);
+   char epc_3[11];
+   snprintf(epc_3, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->epc3);
+   char excvaddr[11];
+   snprintf(excvaddr, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->excvaddr);
+   char depc[11];
+   snprintf(depc, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->depc);
+   char rtn_addr[11];
+   snprintf(rtn_addr, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->rtn_addr);
+   char rtc_time[11];
+   snprintf(rtc_time, 11, "%u", system_get_rtc_time());
+   char *used_software = system_upgrade_userbin_check() ? "user2.bin" : "user1.bin";
+
+   char *reset_reason_template = get_string_from_rom(RESET_REASON_TEMPLATE);
+   char *reset_reason_template_parameters[] = {reason, cause, epc_1, epc_2, epc_3, excvaddr, depc, rtn_addr, rtc_time, used_software, NULL};
+   char *reset_reason = set_string_parameters(reset_reason_template, reset_reason_template_parameters);
+   FREE(reset_reason_template);
+   return reset_reason;
+}
+
+void set_default_wi_fi_settings() {
+   wifi_station_set_auto_connect(false);
+   wifi_station_set_reconnect_policy(false);
+   wifi_station_dhcpc_stop();
+   wifi_set_opmode(STATION_MODE);
+
+   STATION_STATUS station_status = wifi_station_get_connect_status();
+   if (station_status == STATION_GOT_IP) {
+      wifi_station_disconnect();
+   }
+
+   struct station_config station_config_settings;
+
+   wifi_station_get_config_default(&station_config_settings);
+
+   char *default_access_point_name = get_string_from_rom(ACCESS_POINT_NAME);
+   char *default_access_point_password = get_string_from_rom(ACCESS_POINT_PASSWORD);
+
+   if (strncmp(default_access_point_name, station_config_settings.ssid, 32) != 0
+         || strncmp(default_access_point_password, station_config_settings.password, 64) != 0) {
+      struct station_config station_config_settings_to_save;
+
+      memcpy(&station_config_settings_to_save.ssid, default_access_point_name, 32);
+      memcpy(&station_config_settings_to_save.password, default_access_point_password, 64);
+      wifi_station_set_config(&station_config_settings_to_save);
+   }
+   FREE(default_access_point_name);
+   FREE(default_access_point_password);
+
+   struct ip_info current_ip_info;
+   wifi_get_ip_info(STATION_IF, &current_ip_info);
+   char *current_ip = ipaddr_ntoa(&current_ip_info.ip);
+   char *own_ip_address = get_string_from_rom(OWN_IP_ADDRESS);
+
+   if (strncmp(current_ip, own_ip_address, 15) != 0) {
+      char *own_netmask = get_string_from_rom(OWN_NETMASK);
+      char *own_getaway_address = get_string_from_rom(OWN_GETAWAY_ADDRESS);
+      struct ip_info ip_info_to_set;
+
+      ip_info_to_set.ip.addr = ipaddr_addr(own_ip_address);
+      ip_info_to_set.netmask.addr = ipaddr_addr(own_netmask);
+      ip_info_to_set.gw.addr = ipaddr_addr(own_getaway_address);
+      wifi_set_ip_info(STATION_IF, &ip_info_to_set);
+      FREE(own_netmask);
+      FREE(own_getaway_address);
+   }
+   FREE(current_ip);
+   FREE(own_ip_address);
+}
+
 /**
  * @param pin : GPIO pin GPIO_Pin_x
  */
