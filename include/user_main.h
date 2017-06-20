@@ -26,9 +26,11 @@
 #define IGNORE_IMMOBILIZER_FLAG                    256
 #define FIRST_STATUS_INFO_SENT_FLAG                512
 
-#define REQUEST_IDLE_TIME_ON_ERROR     (10 * 1000 / portTICK_RATE_MS) // 10 sec
-#define REQUEST_MAX_DURATION_TIME      (10 * 1000 / portTICK_RATE_MS) // 10 sec
-#define STATUS_REQUESTS_SEND_INTERVAL  (30 * 1000 / portTICK_RATE_MS) // 30 sec
+#define REQUEST_IDLE_TIME_ON_ERROR        (10 * 1000 / portTICK_RATE_MS) // 10 sec
+#define REQUEST_MAX_DURATION_TIME         (10 * 1000 / portTICK_RATE_MS) // 10 sec
+#define STATUS_REQUESTS_SEND_INTERVAL_MS  (30 * 1000)
+#define STATUS_REQUESTS_SEND_INTERVAL     (STATUS_REQUESTS_SEND_INTERVAL_MS / portTICK_RATE_MS) // 30 sec
+
 
 #define IGNORE_ALARMS_TIMEOUT_SEC                           60
 #define IGNORE_FALSE_ALARMS_TIMEOUT_SEC                     30
@@ -131,7 +133,7 @@ void scan_access_point_task(void *pvParameters);
 void send_long_polling_requests_task(void *pvParameters);
 void autoconnect_task(void *pvParameters);
 void activate_status_requests_task_task(void *pvParameters);
-void send_status_requests_task(void *pvParameters);
+void send_status_info_task(void *pvParameters);
 void send_general_request_task(void *pvParameters);
 void beep_task();
 void successfull_connected_tcp_handler_callback(void *arg);
@@ -157,4 +159,5 @@ void send_general_request(struct request_data *request_data_param, unsigned char
 bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request_type);
 void ignore_alarm(struct motion_sensor *ms, unsigned int timeout_ms);
 void stop_ignoring_alarm(xTimerHandle xTimer);
+void schedule_sending_status_info();
 #endif

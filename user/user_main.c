@@ -36,6 +36,7 @@ LOCAL os_timer_t millisecons_time_serv_g;
 LOCAL os_timer_t motion_detectors_ignore_timer_g;
 LOCAL os_timer_t immobilizer_beeper_ignore_timer_g;
 LOCAL os_timer_t immobilizer_ignore_timer_g;
+LOCAL os_timer_t status_sender_timer_g;
 
 struct _esp_tcp user_tcp;
 
@@ -45,7 +46,6 @@ unsigned int general_flags;
 
 struct motion_sensor *alarm_sources_g[ALARM_SOURCES_AMOUNT];
 
-xSemaphoreHandle status_request_semaphore_g;
 xSemaphoreHandle requests_mutex_g;
 xSemaphoreHandle buzzer_semaphore_g;
 
@@ -283,7 +283,7 @@ void status_request_on_error_callback(struct espconn *connection) {
    errors_counter_g++;
    pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
    set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
-   xSemaphoreHandle semaphores_to_give[] = {status_request_semaphore_g, requests_mutex_g, NULL};
+   xSemaphoreHandle semaphores_to_give[] = {requests_mutex_g, NULL};
    request_finish_action(connection, semaphores_to_give);
 }
 
@@ -314,10 +314,18 @@ void status_request_on_succeed_callback(struct espconn *connection) {
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
+   xTaskHandle parent_task = user_data->parent_task;
 
    if (!user_data->response_received && user_data->execute_on_error != NULL) {
       user_data->execute_on_error(connection);
       return;
+   }
+   if (parent_task != NULL) {
+      #ifdef ALLOW_USE_PRINTF
+      printf("parent task of status request is to be deleted...\n");
+      #endif
+
+      vTaskDelete(parent_task);
    }
 
    check_for_update_firmware(user_data->response);
@@ -326,10 +334,10 @@ void status_request_on_succeed_callback(struct espconn *connection) {
    xSemaphoreHandle semaphores_to_give[] = {requests_mutex_g, NULL};
    request_finish_action(connection, semaphores_to_give);
 
-   xTaskCreate(activate_status_requests_task_task, "activate_status_requests_task_task", 200, NULL, 1, NULL);
-
    if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
       upgrade_firmware();
+   } else {
+      schedule_sending_status_info();
    }
 }
 
@@ -345,18 +353,16 @@ void general_request_on_succeed_callback(struct espconn *connection) {
       user_data->execute_on_error(connection);
       return;
    }
-
-   check_for_update_firmware(user_data->response);
-
-   pin_output_set(SERVER_AVAILABILITY_STATUS_LED_PIN);
-
    if (parent_task) {
       #ifdef ALLOW_USE_PRINTF
-      printf("parent task is to be deleted...\n");
+      printf("parent task of general request is to be deleted...\n");
       #endif
 
       vTaskDelete(parent_task);
    }
+
+   check_for_update_firmware(user_data->response);
+   pin_output_set(SERVER_AVAILABILITY_STATUS_LED_PIN);
 
    if (buzzer_semaphore_g != NULL) {
       xSemaphoreGive(buzzer_semaphore_g);
@@ -663,20 +669,12 @@ void establish_connection(struct espconn *connection) {
    }
 }
 
-void activate_status_requests_task_task(void *pvParameters) {
-   vTaskDelay(STATUS_REQUESTS_SEND_INTERVAL);
-   xSemaphoreGive(status_request_semaphore_g);
-   vTaskDelete(NULL);
-}
-
-void send_status_requests_task(void *pvParameters) {
+void send_status_info_task(void *pvParameters) {
    #ifdef ALLOW_USE_PRINTF
    printf("send_status_requests_task has been created\n");
    #endif
-   vTaskDelay(5000 / portTICK_RATE_MS);
 
    for (;;) {
-      xSemaphoreTake(status_request_semaphore_g, portMAX_DELAY);
       xSemaphoreTake(requests_mutex_g, portMAX_DELAY);
 
       if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
@@ -693,7 +691,6 @@ void send_status_requests_task(void *pvParameters) {
          #endif
 
          xSemaphoreGive(requests_mutex_g);
-         xSemaphoreGive(status_request_semaphore_g);
          vTaskDelay(2000 / portTICK_RATE_MS);
          continue;
       }
@@ -702,7 +699,6 @@ void send_status_requests_task(void *pvParameters) {
          reset_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
 
          xSemaphoreGive(requests_mutex_g);
-         xSemaphoreGive(status_request_semaphore_g);
          vTaskDelay(REQUEST_IDLE_TIME_ON_ERROR);
          continue;
       }
@@ -763,6 +759,7 @@ void send_status_requests_task(void *pvParameters) {
       user_data->response = NULL;
       user_data->execute_on_succeed = status_request_on_succeed_callback;
       user_data->execute_on_error = status_request_on_error_callback;
+      user_data->parent_task = xTaskGetCurrentTaskHandle();
       user_data->request_max_duration_time = REQUEST_MAX_DURATION_TIME;
       connection->reserve = user_data;
       connection->type = ESPCONN_TCP;
@@ -785,6 +782,16 @@ void send_status_requests_task(void *pvParameters) {
 
       establish_connection(connection);
    }
+}
+
+void send_status_info() {
+   xTaskCreate(send_status_info_task, "send_status_info_task", 300, NULL, 1, NULL);
+}
+
+void schedule_sending_status_info() {
+   os_timer_disarm(&status_sender_timer_g);
+   os_timer_setfn(&status_sender_timer_g, (os_timer_func_t *) send_status_info, NULL);
+   os_timer_arm(&status_sender_timer_g, STATUS_REQUESTS_SEND_INTERVAL_MS, false);
 }
 
 bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request_type) {
@@ -1204,11 +1211,9 @@ void user_init(void) {
    xTaskCreate(autoconnect_task, "autoconnect_task", 256, NULL, 1, NULL);
    xTaskCreate(scan_access_point_task, "scan_access_point_task", 256, NULL, 1, NULL);
 
-   vSemaphoreCreateBinary(status_request_semaphore_g);
-   xSemaphoreGive(status_request_semaphore_g);
    requests_mutex_g = xSemaphoreCreateMutex();
 
-   xTaskCreate(send_status_requests_task, "send_status_requests_task", 300, NULL, 1, NULL);
+   schedule_sending_status_info();
    //xTaskCreate(testing_task, "testing_task", 200, NULL, 1, NULL);
 
    start_100millisecons_counter();
