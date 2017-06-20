@@ -32,6 +32,8 @@
 unsigned int milliseconds_counter_g;
 int signal_strength_g;
 unsigned short errors_counter_g;
+unsigned char pending_connection_errors_counter_g;
+
 LOCAL os_timer_t millisecons_time_serv_g;
 LOCAL os_timer_t motion_detectors_ignore_timer_g;
 LOCAL os_timer_t immobilizer_beeper_ignore_timer_g;
@@ -275,39 +277,6 @@ void tcp_request_successfully_written_into_buffer_handler_callback() {
    //printf("Request written into buffer callback\n");
 }
 
-void status_request_on_error_callback(struct espconn *connection) {
-   #ifdef ALLOW_USE_PRINTF
-   printf("status_request_on_error_callback. Time: %u\n", milliseconds_counter_g);
-   #endif
-
-   errors_counter_g++;
-   pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
-   set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
-   xSemaphoreHandle semaphores_to_give[] = {requests_mutex_g, NULL};
-   request_finish_action(connection, semaphores_to_give);
-}
-
-void general_request_on_error_callback(struct espconn *connection) {
-   #ifdef ALLOW_USE_PRINTF
-   printf("general_request_on_error_callback. Time: %u\n", milliseconds_counter_g);
-   #endif
-
-   errors_counter_g++;
-   pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
-   set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
-   xSemaphoreHandle semaphores_to_give[] = {requests_mutex_g, NULL};
-   request_finish_action(connection, semaphores_to_give);
-}
-
-void check_for_update_firmware(char *response) {
-   char *update_firmware_json_element = get_string_from_rom(UPDATE_FIRMWARE);
-
-   if (strstr(response, update_firmware_json_element) != NULL) {
-      set_flag(&general_flags, UPDATE_FIRMWARE_FLAG);
-   }
-   FREE(update_firmware_json_element);
-}
-
 void status_request_on_succeed_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
    printf("status_request_on_succeed_callback, Time: %u\n", milliseconds_counter_g);
@@ -331,14 +300,24 @@ void status_request_on_succeed_callback(struct espconn *connection) {
    check_for_update_firmware(user_data->response);
 
    pin_output_set(SERVER_AVAILABILITY_STATUS_LED_PIN);
-   xSemaphoreHandle semaphores_to_give[] = {requests_mutex_g, NULL};
-   request_finish_action(connection, semaphores_to_give);
+   request_finish_action(connection);
 
    if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
       upgrade_firmware();
    } else {
       schedule_sending_status_info();
    }
+}
+
+void status_request_on_error_callback(struct espconn *connection) {
+   #ifdef ALLOW_USE_PRINTF
+   printf("status_request_on_error_callback. Time: %u\n", milliseconds_counter_g);
+   #endif
+
+   errors_counter_g++;
+   pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
+   set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
+   request_finish_action(connection);
 }
 
 void general_request_on_succeed_callback(struct espconn *connection) {
@@ -368,20 +347,28 @@ void general_request_on_succeed_callback(struct espconn *connection) {
       xSemaphoreGive(buzzer_semaphore_g);
    }
 
-   xSemaphoreHandle semaphores_to_give[] = {requests_mutex_g, NULL};
-   request_finish_action(connection, semaphores_to_give);
+   request_finish_action(connection);
 }
 
-void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphores_to_give[]) {
+void general_request_on_error_callback(struct espconn *connection) {
+   #ifdef ALLOW_USE_PRINTF
+   printf("general_request_on_error_callback. Time: %u\n", milliseconds_counter_g);
+   #endif
+
+   errors_counter_g++;
+   pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
+   set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
+   request_finish_action(connection);
+}
+
+void request_finish_action(struct espconn *connection) {
    struct connection_user_data *user_data = connection->reserve;
 
    if (user_data->request != NULL) {
       FREE(user_data->request);
-      user_data->request = NULL;
    }
    if (user_data->response != NULL) {
       FREE(user_data->response);
-      user_data->response = NULL;
    }
 
    if (user_data->timeout_request_supervisor_task != NULL) {
@@ -398,15 +385,15 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
       #ifdef ALLOW_USE_PRINTF
       printf("\n ERROR! Connection is still in progress\n");
       #endif
-   }
-   FREE(connection);
 
-   if (semaphores_to_give != NULL) {
-      unsigned char i;
-      for (i = 0; semaphores_to_give[i] != NULL; i++) {
-         xSemaphoreHandle semaphore_to_give = semaphores_to_give[i];
-         xSemaphoreGive(semaphore_to_give);
+      if (error_code == ESPCONN_INPROGRESS) {
+         pending_connection_errors_counter_g++;
       }
+
+      xTaskCreate(disconnect_connection_task, "disconnect_connection_task", 180, connection, 1, NULL);
+   } else {
+      FREE(connection);
+      xSemaphoreGive(requests_mutex_g);
    }
 
    #if defined(ALLOW_USE_PRINTF) && defined(USE_MALLOC_LOGGER)
@@ -414,6 +401,17 @@ void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphor
    print_not_empty_elements_lines();
    printf("\n Free Heap size: %u\n", xPortGetFreeHeapSize());
    #endif
+}
+
+void disconnect_connection_task(void *pvParameters) {
+   struct espconn *connection = pvParameters;
+
+   espconn_disconnect(connection); // Don't call this API in any espconn callback
+   espconn_delete(connection);
+   FREE(connection);
+   xSemaphoreGive(requests_mutex_g);
+
+   vTaskDelete(NULL);
 }
 
 bool compare_pins_names(char *activated_pin, char *rom_pin_name) {
@@ -444,6 +442,7 @@ void input_pins_analyzer_task(void *pvParameters) {
       #ifdef ALLOW_USE_PRINTF
       printf("\n pin prefix is not found: %s\n", activated_pin_with_prefix);
       #endif
+
       FREE(activated_pin_with_prefix);
       vTaskDelete(NULL);
    }
@@ -525,29 +524,6 @@ void timeout_request_supervisor_task(void *pvParameters) {
    vTaskDelete(NULL);
 }
 
-void ota_finished_callback(void *arg) {
-   struct upgrade_server_info *update = arg;
-
-   if (update->upgrade_flag == true) {
-      #ifdef ALLOW_USE_PRINTF
-      printf("[OTA] success; rebooting! Time: %u\n", milliseconds_counter_g);
-      #endif
-
-      system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
-      system_upgrade_reboot();
-   } else {
-      #ifdef ALLOW_USE_PRINTF
-      printf("[OTA] failed! Time: %u\n", milliseconds_counter_g);
-      #endif
-
-      system_restart();
-   }
-
-   FREE(&update->sockaddrin);
-   FREE(update->url);
-   FREE(update);
-}
-
 void blink_leds_while_updating_task(void *pvParameters) {
    for (;;) {
       if (read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN)) {
@@ -560,6 +536,15 @@ void blink_leds_while_updating_task(void *pvParameters) {
 
       vTaskDelay(100 / portTICK_RATE_MS);
    }
+}
+
+void check_for_update_firmware(char *response) {
+   char *update_firmware_json_element = get_string_from_rom(UPDATE_FIRMWARE);
+
+   if (strstr(response, update_firmware_json_element) != NULL) {
+      set_flag(&general_flags, UPDATE_FIRMWARE_FLAG);
+   }
+   FREE(update_firmware_json_element);
 }
 
 void upgrade_firmware() {
@@ -597,6 +582,29 @@ void upgrade_firmware() {
    FREE(server_ip);
    upgrade_server->url = url;
    system_upgrade_start(upgrade_server);
+}
+
+void ota_finished_callback(void *arg) {
+   struct upgrade_server_info *update = arg;
+
+   if (update->upgrade_flag == true) {
+      #ifdef ALLOW_USE_PRINTF
+      printf("[OTA] success; rebooting! Time: %u\n", milliseconds_counter_g);
+      #endif
+
+      system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
+      system_upgrade_reboot();
+   } else {
+      #ifdef ALLOW_USE_PRINTF
+      printf("[OTA] failed! Time: %u\n", milliseconds_counter_g);
+      #endif
+
+      system_restart();
+   }
+
+   FREE(&update->sockaddrin);
+   FREE(update->url);
+   FREE(update);
 }
 
 void establish_connection(struct espconn *connection) {
@@ -708,6 +716,8 @@ void send_status_info_task(void *pvParameters) {
       char *device_name = get_string_from_rom(DEVICE_NAME);
       char errors_counter[6];
       snprintf(errors_counter, 6, "%u", errors_counter_g);
+      char pending_connection_errors_counter[4];
+      snprintf(pending_connection_errors_counter, 4, "%u", pending_connection_errors_counter_g);
       char uptime[11];
       snprintf(uptime, 11, "%u", milliseconds_counter_g / MILLISECONDS_COUNTER_DIVIDER);
       char build_timestamp[30];
@@ -723,8 +733,8 @@ void send_status_info_task(void *pvParameters) {
       }
 
       char *status_info_request_payload_template_parameters[] =
-            {signal_strength, device_name, errors_counter, uptime, build_timestamp, free_heap_space, reset_reason, NULL};
-      char *status_info_request_payload_template = get_string_from_rom(STATUS_INFO_REQUEST_PAYLOAD);
+            {signal_strength, device_name, errors_counter, pending_connection_errors_counter, uptime, build_timestamp, free_heap_space, reset_reason, NULL};
+      char *status_info_request_payload_template = get_string_from_rom(STATUS_INFO_REQUEST_PAYLOAD_TEMPLATE);
       char *request_payload = set_string_parameters(status_info_request_payload_template, status_info_request_payload_template_parameters);
 
       FREE(device_name);
@@ -735,8 +745,8 @@ void send_status_info_task(void *pvParameters) {
 
       char *request_template = get_string_from_rom(STATUS_INFO_POST_REQUEST);
       unsigned short request_payload_length = strnlen(request_payload, 0xFFFF);
-      char request_payload_length_string[4];
-      sprintf(request_payload_length_string, "%d", request_payload_length);
+      char request_payload_length_string[6];
+      snprintf(request_payload_length_string, 6, "%u", request_payload_length);
       char *server_ip_address = get_string_from_rom(SERVER_IP_ADDRESS);
       char *request_template_parameters[] = {request_payload_length_string, server_ip_address, request_payload, NULL};
       char *request = set_string_parameters(request_template, request_template_parameters);

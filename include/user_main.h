@@ -55,14 +55,15 @@ char STATUS_INFO_POST_REQUEST[] ICACHE_RODATA_ATTR =
       "Connection: close\r\n"
       "Accept: application/json\r\n\r\n"
       "<3>\r\n";
-char STATUS_INFO_REQUEST_PAYLOAD[] ICACHE_RODATA_ATTR =
+char STATUS_INFO_REQUEST_PAYLOAD_TEMPLATE[] ICACHE_RODATA_ATTR =
       "{\"gain\":\"<1>\","
       "\"deviceName\":\"<2>\","
       "\"errors\":<3>,"
-      "\"uptime\":<4>,"
-      "\"buildTimestamp\":\"<5>\","
-      "\"freeHeapSpace\":<6>,"
-      "\"resetReason\":\"<7>\"}";
+      "\"pendingConnectionErrors\":<4>,"
+      "\"uptime\":<5>,"
+      "\"buildTimestamp\":\"<6>\","
+      "\"freeHeapSpace\":<7>,"
+      "\"resetReason\":\"<8>\"}";
 char ALARM_GET_REQUEST[] ICACHE_RODATA_ATTR =
       "GET /server/esp8266/alarm?alarmSource=<1> HTTP/1.1\r\n"
       "Host: <2>\r\n"
@@ -147,7 +148,7 @@ void long_polling_request_on_error_callback(struct espconn *connection);
 void long_polling_request_finish_action(struct espconn *connection);
 void upgrade_firmware();
 void establish_connection(struct espconn *connection);
-void request_finish_action(struct espconn *connection, xSemaphoreHandle semaphores_to_give[]);
+void request_finish_action(struct espconn *connection);
 void pins_interrupt_handler();
 void uart_rx_intr_handler(void *params);
 void uart_config();
@@ -160,4 +161,7 @@ bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request
 void ignore_alarm(struct motion_sensor *ms, unsigned int timeout_ms);
 void stop_ignoring_alarm(xTimerHandle xTimer);
 void schedule_sending_status_info();
+void check_for_update_firmware(char *response);
+void ota_finished_callback(void *arg);
+void disconnect_connection_task(void *pvParameters);
 #endif
