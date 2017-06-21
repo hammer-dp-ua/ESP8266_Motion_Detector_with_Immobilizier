@@ -223,9 +223,10 @@ void successfull_disconnected_tcp_handler_callback(void *arg) {
    printf("Disconnected callback beginning. Response %s received. Time: %u\n", response_received ? "has been" : "has not been", milliseconds_counter_g);
    #endif
 
-   void (*execute_on_succeed)(struct espconn *connection) = user_data->execute_on_succeed;
-   if (execute_on_succeed) {
-      execute_on_succeed(connection);
+   void (*execute_on_disconnect)(struct espconn *connection) = user_data->execute_on_disconnect;
+
+   if (execute_on_disconnect) {
+      execute_on_disconnect(connection);
    }
 }
 
@@ -277,9 +278,9 @@ void tcp_request_successfully_written_into_buffer_handler_callback() {
    //printf("Request written into buffer callback\n");
 }
 
-void status_request_on_succeed_callback(struct espconn *connection) {
+void status_request_on_disconnect_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
-   printf("status_request_on_succeed_callback, Time: %u\n", milliseconds_counter_g);
+   printf("status_request_on_disconnect_callback, Time: %u\n", milliseconds_counter_g);
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
@@ -320,9 +321,9 @@ void status_request_on_error_callback(struct espconn *connection) {
    request_finish_action(connection);
 }
 
-void general_request_on_succeed_callback(struct espconn *connection) {
+void general_request_on_disconnect_callback(struct espconn *connection) {
    #ifdef ALLOW_USE_PRINTF
-   printf("general_request_on_succeed_callback. Time: %u\n", milliseconds_counter_g);
+   printf("general_request_on_disconnect_callback. Time: %u\n", milliseconds_counter_g);
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
@@ -386,6 +387,7 @@ void request_finish_action(struct espconn *connection) {
 void disconnect_connection_task(void *pvParameters) {
    struct espconn *connection = pvParameters;
 
+   espconn_regist_disconcb(connection, NULL);
    espconn_disconnect(connection); // Don't call this API in any espconn callback
    espconn_delete(connection);
    FREE(connection);
@@ -754,7 +756,7 @@ void send_status_info_task(void *pvParameters) {
       user_data->timeout_request_supervisor_task = NULL;
       user_data->request = request;
       user_data->response = NULL;
-      user_data->execute_on_succeed = status_request_on_succeed_callback;
+      user_data->execute_on_disconnect = status_request_on_disconnect_callback;
       user_data->execute_on_error = status_request_on_error_callback;
       user_data->parent_task = xTaskGetCurrentTaskHandle();
       user_data->request_max_duration_time = REQUEST_MAX_DURATION_TIME;
@@ -1016,7 +1018,7 @@ void send_general_request_task(void *pvParameters) {
       user_data->timeout_request_supervisor_task = NULL;
       user_data->request = request;
       user_data->response = NULL;
-      user_data->execute_on_succeed = general_request_on_succeed_callback;
+      user_data->execute_on_disconnect = general_request_on_disconnect_callback;
       user_data->execute_on_error = general_request_on_error_callback;
       user_data->parent_task = xTaskGetCurrentTaskHandle();
       user_data->request_max_duration_time = REQUEST_MAX_DURATION_TIME;

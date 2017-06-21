@@ -100,7 +100,7 @@ struct connection_user_data {
    bool response_received;
    char *request;
    char *response;
-   void (*execute_on_succeed) (struct espconn *connection);
+   void (*execute_on_disconnect) (struct espconn *connection);
    void (*execute_on_error) (struct espconn *connection);
    xTaskHandle timeout_request_supervisor_task;
    xTaskHandle parent_task;

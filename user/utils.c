@@ -247,12 +247,10 @@ char *generate_reset_reason() {
    snprintf(depc, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->depc);
    char rtn_addr[11];
    snprintf(rtn_addr, 11, HEXADECIMAL_ADDRESS_FORMAT, rst_info->rtn_addr);
-   char rtc_time[11];
-   snprintf(rtc_time, 11, "%u", system_get_rtc_time());
    char *used_software = system_upgrade_userbin_check() ? "user2.bin" : "user1.bin";
 
    char *reset_reason_template = get_string_from_rom(RESET_REASON_TEMPLATE);
-   char *reset_reason_template_parameters[] = {reason, cause, epc_1, epc_2, epc_3, excvaddr, depc, rtn_addr, rtc_time, used_software, NULL};
+   char *reset_reason_template_parameters[] = {reason, cause, epc_1, epc_2, epc_3, excvaddr, depc, rtn_addr, used_software, NULL};
    char *reset_reason = set_string_parameters(reset_reason_template, reset_reason_template_parameters);
    FREE(reset_reason_template);
    return reset_reason;
@@ -273,18 +271,16 @@ void set_default_wi_fi_settings() {
 
    wifi_station_get_config_default(&station_config_settings);
 
-   char *default_access_point_name = get_string_from_rom(ACCESS_POINT_NAME);
    char *default_access_point_password = get_string_from_rom(ACCESS_POINT_PASSWORD);
 
-   if (strncmp(default_access_point_name, station_config_settings.ssid, 32) != 0
+   if (strncmp(ACCESS_POINT_NAME, station_config_settings.ssid, 32) != 0
          || strncmp(default_access_point_password, station_config_settings.password, 64) != 0) {
       struct station_config station_config_settings_to_save;
 
-      memcpy(&station_config_settings_to_save.ssid, default_access_point_name, 32);
+      memcpy(&station_config_settings_to_save.ssid, ACCESS_POINT_NAME, 32);
       memcpy(&station_config_settings_to_save.password, default_access_point_password, 64);
       wifi_station_set_config(&station_config_settings_to_save);
    }
-   FREE(default_access_point_name);
    FREE(default_access_point_password);
 
    struct ip_info current_ip_info;

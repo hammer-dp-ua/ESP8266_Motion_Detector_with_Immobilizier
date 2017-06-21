@@ -11,8 +11,7 @@
 LOCAL char RESET_REASON_TEMPLATE[] ICACHE_RODATA_ATTR = "<1>\\n"
       " Fatal exception (<2>):\\n"
       " epc1=0x<3>, epc2=0x<4>, epc3=0x<5>, excvaddr=0x<6>, depc=0x<7>, rtn_addr=0x<8>\\n"
-      " RTC time: <9>\\n"
-      " used software: <10>";
+      " used software: <9>";
 
 void set_flag(unsigned int *flags, unsigned int flag_value);
 void reset_flag(unsigned int *flags, unsigned int flag_value);
