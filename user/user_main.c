@@ -380,27 +380,7 @@ void request_finish_action(struct espconn *connection) {
    }
    FREE(user_data);
 
-   char error_code = espconn_delete(connection);
-   if (error_code != 0) {
-      #ifdef ALLOW_USE_PRINTF
-      printf("\n ERROR! Connection is still in progress\n");
-      #endif
-
-      if (error_code == ESPCONN_INPROGRESS) {
-         pending_connection_errors_counter_g++;
-      }
-
-      xTaskCreate(disconnect_connection_task, "disconnect_connection_task", 180, connection, 1, NULL);
-   } else {
-      FREE(connection);
-      xSemaphoreGive(requests_mutex_g);
-   }
-
-   #if defined(ALLOW_USE_PRINTF) && defined(USE_MALLOC_LOGGER)
-   printf("\n Elements amount in malloc logger list: %u\n", get_malloc_logger_list_elements_amount());
-   print_not_empty_elements_lines();
-   printf("\n Free Heap size: %u\n", xPortGetFreeHeapSize());
-   #endif
+   xTaskCreate(disconnect_connection_task, "disconnect_connection_task", 180, connection, 1, NULL);
 }
 
 void disconnect_connection_task(void *pvParameters) {
@@ -410,6 +390,12 @@ void disconnect_connection_task(void *pvParameters) {
    espconn_delete(connection);
    FREE(connection);
    xSemaphoreGive(requests_mutex_g);
+
+   #if defined(ALLOW_USE_PRINTF) && defined(USE_MALLOC_LOGGER)
+   printf("\n Elements amount in malloc logger list: %u\n", get_malloc_logger_list_elements_amount());
+   print_not_empty_elements_lines();
+   printf("\n Free Heap size: %u\n", xPortGetFreeHeapSize());
+   #endif
 
    vTaskDelete(NULL);
 }
@@ -656,6 +642,7 @@ void establish_connection(struct espconn *connection) {
          printf("Already connected");
          #endif
 
+         pending_connection_errors_counter_g++;
          break;
       case ESPCONN_ARG:
          #ifdef ALLOW_USE_PRINTF
