@@ -32,13 +32,17 @@
 unsigned int milliseconds_counter_g;
 int signal_strength_g;
 unsigned short errors_counter_g;
+unsigned short repetitive_errors_counter_g = 0;
 unsigned char pending_connection_errors_counter_g;
+unsigned char repetitive_ap_connecting_errors_counter_g;
 
 LOCAL os_timer_t millisecons_time_serv_g;
 LOCAL os_timer_t motion_detectors_ignore_timer_g;
 LOCAL os_timer_t immobilizer_beeper_ignore_timer_g;
 LOCAL os_timer_t immobilizer_ignore_timer_g;
 LOCAL os_timer_t status_sender_timer_g;
+LOCAL os_timer_t errors_checker_timer_g;
+LOCAL os_timer_t ap_autoconnect_timer_g;
 
 struct _esp_tcp user_tcp;
 
@@ -122,7 +126,6 @@ void get_ap_signal_strength(void *arg, STATUS status) {
 void scan_access_point_task(void *pvParameters) {
    long rescan_when_connected_task_delay = 10 * 60 * 1000 / portTICK_RATE_MS; // 10 mins
    long rescan_when_not_connected_task_delay = 10 * 1000 / portTICK_RATE_MS; // 10 secs
-   char *default_access_point_name = get_string_from_rom(ACCESS_POINT_NAME);
 
    for (;;) {
       STATION_STATUS status = wifi_station_get_connect_status();
@@ -130,7 +133,7 @@ void scan_access_point_task(void *pvParameters) {
       if (status == STATION_GOT_IP) {
          struct scan_config ap_scan_config;
 
-         ap_scan_config.ssid = default_access_point_name;
+         ap_scan_config.ssid = ACCESS_POINT_NAME;
          wifi_station_scan(&ap_scan_config, get_ap_signal_strength);
 
          vTaskDelay(rescan_when_connected_task_delay);
@@ -140,16 +143,26 @@ void scan_access_point_task(void *pvParameters) {
    }
 }
 
-void autoconnect_task(void *pvParameters) {
-   long task_delay = 10000 / portTICK_RATE_MS;
+void ap_connect_task(void *pvParameters) {
+   STATION_STATUS status = wifi_station_get_connect_status();
 
-   for (;;) {
-      STATION_STATUS status = wifi_station_get_connect_status();
-      read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN);
-      if (status != STATION_GOT_IP && status != STATION_CONNECTING) {
-         wifi_station_connect(); // Do not call this API in user_init
-      }
-      vTaskDelay(task_delay);
+   if (status != STATION_GOT_IP) {
+      wifi_station_connect(); // Do not call this API in user_init
+   }
+   vTaskDelete(NULL);
+}
+
+void ap_autoconnect() {
+   STATION_STATUS status = wifi_station_get_connect_status();
+
+   if (status != STATION_GOT_IP && status != STATION_CONNECTING) {
+      wifi_station_connect(); // Do not call this API in user_init
+   } else if (status != STATION_GOT_IP) {
+      repetitive_ap_connecting_errors_counter_g++;
+   }
+
+   if (repetitive_ap_connecting_errors_counter_g >= MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT) {
+      wifi_station_disconnect();
    }
 }
 
@@ -253,6 +266,7 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
 
       if (strstr(pdata, server_sent)) {
          user_data->response_received = true;
+         repetitive_errors_counter_g = 0;
 
          char *response = MALLOC(len, __LINE__, milliseconds_counter_g);
 
@@ -316,6 +330,7 @@ void status_request_on_error_callback(struct espconn *connection) {
    #endif
 
    errors_counter_g++;
+   repetitive_errors_counter_g++;
    pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
    set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
    request_finish_action(connection);
@@ -357,6 +372,7 @@ void general_request_on_error_callback(struct espconn *connection) {
    #endif
 
    errors_counter_g++;
+   repetitive_errors_counter_g++;
    pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
    set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
    request_finish_action(connection);
@@ -1048,10 +1064,19 @@ void send_general_request_task(void *pvParameters) {
 void wifi_event_handler_callback(System_Event_t *event) {
    switch (event->event_id) {
       case EVENT_STAMODE_CONNECTED:
+         #ifdef ALLOW_USE_PRINTF
+         printf("\n Connected to AP\n");
+         #endif
+
          pin_output_set(AP_CONNECTION_STATUS_LED_PIN);
          turn_motion_sensors_on();
+         repetitive_ap_connecting_errors_counter_g = 0;
          break;
       case EVENT_STAMODE_DISCONNECTED:
+         #ifdef ALLOW_USE_PRINTF
+         printf("\n Disconnected from AP\n");
+         #endif
+
          pin_output_reset(AP_CONNECTION_STATUS_LED_PIN);
          pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
          break;
@@ -1184,6 +1209,15 @@ bool are_motion_sensors_turned_on() {
    return read_output_pin_state(MOTION_SENSORS_ENABLE_PIN);
 }
 
+/**
+ * Created as workaround to hanging issue.
+ */
+void check_errors_amount() {
+   if (repetitive_errors_counter_g >= MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT) {
+      system_restart();
+   }
+}
+
 void testing_task(void *pvParameters) {
    for (;;) {
       xTaskCreate(input_pins_analyzer_task, "input_pins_analyzer_task", 256, "pin:MOTION_SENSOR_2", 1, NULL);
@@ -1207,13 +1241,19 @@ void user_init(void) {
    set_default_wi_fi_settings();
    espconn_init();
 
-   xTaskCreate(autoconnect_task, "autoconnect_task", 256, NULL, 1, NULL);
+   os_timer_setfn(&ap_autoconnect_timer_g, (os_timer_func_t *) ap_autoconnect, NULL);
+   os_timer_arm(&ap_autoconnect_timer_g, AP_AUTOCONNECT_INTERVAL_MS, true);
+
+   xTaskCreate(ap_connect_task, "ap_connect_task", 180, NULL, 1, NULL);
    xTaskCreate(scan_access_point_task, "scan_access_point_task", 256, NULL, 1, NULL);
 
    requests_mutex_g = xSemaphoreCreateMutex();
 
    schedule_sending_status_info();
    //xTaskCreate(testing_task, "testing_task", 200, NULL, 1, NULL);
+
+   os_timer_setfn(&errors_checker_timer_g, (os_timer_func_t *) check_errors_amount, NULL);
+   os_timer_arm(&errors_checker_timer_g, ERRORS_CHECKER_INTERVAL_MS, true);
 
    start_100millisecons_counter();
 }

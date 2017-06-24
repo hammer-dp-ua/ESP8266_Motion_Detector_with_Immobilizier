@@ -30,6 +30,8 @@
 #define REQUEST_MAX_DURATION_TIME         (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define STATUS_REQUESTS_SEND_INTERVAL_MS  (30 * 1000)
 #define STATUS_REQUESTS_SEND_INTERVAL     (STATUS_REQUESTS_SEND_INTERVAL_MS / portTICK_RATE_MS) // 30 sec
+#define ERRORS_CHECKER_INTERVAL_MS        (30 * 1000)
+#define AP_AUTOCONNECT_INTERVAL_MS        (10 * 1000)
 
 #define IGNORE_ALARMS_TIMEOUT_SEC                           60
 #define IGNORE_FALSE_ALARMS_TIMEOUT_SEC                     30
@@ -43,6 +45,8 @@
 
 #define ALARM_SOURCES_AMOUNT 7
 #define ALARM_TIMERS_MAX_AMOUNT 5 // 3 alarms + 2 false alarms
+
+#define MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT 10
 
 char RESPONSE_SERVER_SENT_OK[] ICACHE_RODATA_ATTR = "\"statusCode\":\"OK\"";
 char STATUS_INFO_POST_REQUEST[] ICACHE_RODATA_ATTR =
@@ -131,7 +135,7 @@ struct request_data {
 
 void scan_access_point_task(void *pvParameters);
 void send_long_polling_requests_task(void *pvParameters);
-void autoconnect_task(void *pvParameters);
+void ap_connect_task(void *pvParameters);
 void activate_status_requests_task_task(void *pvParameters);
 void send_status_info_task(void *pvParameters);
 void send_general_request_task(void *pvParameters);
@@ -163,4 +167,7 @@ void schedule_sending_status_info();
 void check_for_update_firmware(char *response);
 void ota_finished_callback(void *arg);
 void disconnect_connection_task(void *pvParameters);
+void check_errors_amount();
+
+
 #endif
