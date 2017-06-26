@@ -331,3 +331,38 @@ bool read_output_pin_state(unsigned int pin) {
 bool read_input_pin_state(unsigned int pin) {
    return (GPIO_REG_READ(GPIO_IN_ADDRESS) & pin) ? true : false;
 }
+
+LOCAL unsigned int replace_zeroes(unsigned int to_be_replaced_value) {
+   unsigned char bits;
+   unsigned int to_be_replaced_value_tmp = to_be_replaced_value;
+
+   for (bits = 0; bits <= 32 && to_be_replaced_value_tmp > 0; bits++) {
+      to_be_replaced_value_tmp >>= 1;
+   }
+
+   #ifdef ALLOW_USE_PRINTF
+   printf("bits: %u\n", bits);
+   #endif
+
+   unsigned int returning_value = 0;
+   while (bits > 0) {
+      returning_value <<= 1;
+      returning_value |= 1;
+      bits--;
+   }
+   return returning_value;
+}
+
+unsigned int generate_rand(unsigned int min_value, unsigned int max_value) {
+   unsigned int generated_random = rand();
+   unsigned int max_value_with_replaced_zeroes = replace_zeroes(max_value);
+   unsigned int final_random = generated_random & max_value_with_replaced_zeroes;
+
+   if (final_random > max_value) {
+      return max_value;
+   } else if (final_random < min_value) {
+      return min_value;
+   } else {
+      return final_random;
+   }
+}

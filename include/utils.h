@@ -26,5 +26,6 @@ bool read_output_pin_state(unsigned int pin);
 bool read_input_pin_state(unsigned int pin);
 char *generate_reset_reason();
 void set_default_wi_fi_settings();
+unsigned int generate_rand(unsigned int min_value, unsigned int max_value);
 
 #endif
