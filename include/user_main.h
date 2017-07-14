@@ -46,7 +46,14 @@
 #define ALARM_SOURCES_AMOUNT 7
 #define ALARM_TIMERS_MAX_AMOUNT 5 // 3 alarms + 2 false alarms
 
-#define MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT 10
+#define MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT 15
+
+//#define FLASH_USER_DATA_SECTOR               99
+//#define FLASH_USER_DATA_START_ADDRESS        FLASH_USER_DATA_SECTOR * SPI_FLASH_SEC_SIZE
+//#define ERROR_TYPE_FLASH_ADDRESS             FLASH_USER_DATA_START_ADDRESS
+//#define CONNECTION_ERROR_CODE_FLASH_ADDRESS  FLASH_USER_DATA_START_ADDRESS + 4
+#define ERROR_TYPE_RTC_ADDRESS            64
+#define CONNECTION_ERROR_CODE_RTC_ADDRESS ERROR_TYPE_RTC_ADDRESS + 1
 
 char RESPONSE_SERVER_SENT_OK[] ICACHE_RODATA_ATTR = "\"statusCode\":\"OK\"";
 char STATUS_INFO_POST_REQUEST[] ICACHE_RODATA_ATTR =
@@ -66,7 +73,8 @@ char STATUS_INFO_REQUEST_PAYLOAD_TEMPLATE[] ICACHE_RODATA_ATTR =
       "\"uptime\":<5>,"
       "\"buildTimestamp\":\"<6>\","
       "\"freeHeapSpace\":<7>,"
-      "\"resetReason\":\"<8>\"}";
+      "\"resetReason\":\"<8>\","
+      "\"systemRestartReason\":\"<9>\"}";
 char ALARM_GET_REQUEST[] ICACHE_RODATA_ATTR =
       "GET /server/esp8266/alarm?alarmSource=<1> HTTP/1.1\r\n"
       "Host: <2>\r\n"
@@ -92,8 +100,11 @@ char FIRMWARE_UPDATE_GET_REQUEST[] ICACHE_RODATA_ATTR =
       "User-Agent: ESP8266\r\n"
       "Connection: close\r\n\r\n";
 char MOTION_SENSOR_1_PIN[] ICACHE_RODATA_ATTR = "MOTION_SENSOR_1";
+char MOTION_SENSOR_1_PIN_WITH_PREFIX[] ICACHE_RODATA_ATTR = "pin:MOTION_SENSOR_1";
 char MOTION_SENSOR_2_PIN[] ICACHE_RODATA_ATTR = "MOTION_SENSOR_2";
+char MOTION_SENSOR_2_PIN_WITH_PREFIX[] ICACHE_RODATA_ATTR = "pin:MOTION_SENSOR_2";
 char MOTION_SENSOR_3_PIN[] ICACHE_RODATA_ATTR = "MOTION_SENSOR_3";
+char MOTION_SENSOR_3_PIN_WITH_PREFIX[] ICACHE_RODATA_ATTR = "pin:MOTION_SENSOR_3";
 char IMMOBILIZER_LED_PIN[] ICACHE_RODATA_ATTR = "IMMOBILIZER_LED";
 char PIR_LED_1_PIN[] ICACHE_RODATA_ATTR = "PIR_LED_1";
 char MW_LED_1_PIN[] ICACHE_RODATA_ATTR = "MW_LED_1";
@@ -132,6 +143,11 @@ struct request_data {
    struct motion_sensor *ms;
    GeneralRequestType request_type;
 };
+
+typedef enum {
+   ACCESS_POINT_CONNECTION_ERROR = 1,
+   REQUEST_CONNECTION_ERROR
+} SystemRestartReasonType;
 
 void scan_access_point_task(void *pvParameters);
 void send_long_polling_requests_task(void *pvParameters);

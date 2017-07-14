@@ -89,9 +89,9 @@ LOCAL bool system_upgrade_internal(struct upgrade_param *upgrade, uint8 *data, u
          vTaskDelay(10 / portTICK_RATE_MS);
       }
 
-#ifdef ALLOW_USE_PRINTF
+      #ifdef ALLOW_USE_PRINTF
       printf("flash erase over. Last erased sector: %u\n", upgrade->fw_bin_sec_earse - 1);
-#endif
+      #endif
 
       return true;
    }

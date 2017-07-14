@@ -32,9 +32,10 @@
 unsigned int milliseconds_counter_g;
 int signal_strength_g;
 unsigned short errors_counter_g;
-unsigned short repetitive_errors_counter_g = 0;
+unsigned short repetitive_request_errors_counter_g = 0;
 unsigned char pending_connection_errors_counter_g;
-unsigned char repetitive_ap_connecting_errors_counter_g;
+unsigned int repetitive_ap_connecting_errors_counter_g;
+int connection_error_code_g;
 
 LOCAL os_timer_t millisecons_time_serv_g;
 LOCAL os_timer_t motion_detectors_ignore_timer_g;
@@ -175,11 +176,12 @@ void stop_ignoring_immobilizer() {
 }
 
 void beep_task() {
+   vSemaphoreCreateBinary(buzzer_semaphore_g);
+   xSemaphoreTake(buzzer_semaphore_g, REQUEST_MAX_DURATION_TIME);
+
    #ifdef ALLOW_USE_PRINTF
    printf("beep_task has been created. Time: %u\n", milliseconds_counter_g);
    #endif
-
-   vSemaphoreCreateBinary(buzzer_semaphore_g);
 
    pin_output_set(BUZZER_PIN);
    vTaskDelay(80 / portTICK_RATE_MS);
@@ -248,10 +250,19 @@ void tcp_connection_error_handler_callback(void *arg, sint8 err) {
    printf("Connection error callback. Error code: %d. Time: %u\n", err, milliseconds_counter_g);
    #endif
 
+   connection_error_code_g = err;
+
    struct espconn *connection = arg;
-   struct connection_user_data *user_data = connection->reserve;
-   void (*execute_on_error)(struct espconn *connection) = user_data->execute_on_error;
-   if (execute_on_error) {
+   struct connection_user_data *user_data = NULL;
+   void (*execute_on_error)(struct espconn *connection) = NULL;
+
+   if (connection != NULL) {
+      user_data = connection->reserve;
+   }
+   if (user_data != NULL) {
+      execute_on_error = user_data->execute_on_error;
+   }
+   if (execute_on_error != NULL) {
       execute_on_error(connection);
    }
 }
@@ -266,7 +277,6 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
 
       if (strstr(pdata, server_sent)) {
          user_data->response_received = true;
-         repetitive_errors_counter_g = 0;
 
          char *response = MALLOC(len, __LINE__, milliseconds_counter_g);
 
@@ -274,7 +284,7 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
          user_data->response = response;
 
          #ifdef ALLOW_USE_PRINTF
-         printf("Response received: Time: %u\n", milliseconds_counter_g);
+         printf("Response received. Time: %u\n", milliseconds_counter_g);
          #endif
       }
       FREE(server_sent);
@@ -311,6 +321,12 @@ void status_request_on_disconnect_callback(struct espconn *connection) {
 
       vTaskDelete(parent_task);
    }
+   if (!read_flag(general_flags, FIRST_STATUS_INFO_SENT_FLAG)) {
+      set_flag(&general_flags, FIRST_STATUS_INFO_SENT_FLAG);
+   }
+
+   connection_error_code_g = 0;
+   repetitive_request_errors_counter_g = 0;
 
    check_for_update_firmware(user_data->response);
 
@@ -330,7 +346,8 @@ void status_request_on_error_callback(struct espconn *connection) {
    #endif
 
    errors_counter_g++;
-   repetitive_errors_counter_g++;
+   repetitive_request_errors_counter_g++;
+
    pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
    set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
    request_finish_action(connection);
@@ -356,11 +373,15 @@ void general_request_on_disconnect_callback(struct espconn *connection) {
       vTaskDelete(parent_task);
    }
 
+   connection_error_code_g = 0;
+   repetitive_request_errors_counter_g = 0;
+
    check_for_update_firmware(user_data->response);
    pin_output_set(SERVER_AVAILABILITY_STATUS_LED_PIN);
 
    if (buzzer_semaphore_g != NULL) {
-      xSemaphoreGive(buzzer_semaphore_g);
+      signed portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
+      xSemaphoreGiveFromISR(buzzer_semaphore_g, &xHigherPriorityTaskWoken);
    }
 
    request_finish_action(connection);
@@ -372,7 +393,8 @@ void general_request_on_error_callback(struct espconn *connection) {
    #endif
 
    errors_counter_g++;
-   repetitive_errors_counter_g++;
+   repetitive_request_errors_counter_g++;
+
    pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
    set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
    request_finish_action(connection);
@@ -396,6 +418,7 @@ void request_finish_action(struct espconn *connection) {
       vTaskDelete(user_data->timeout_request_supervisor_task);
    }
    FREE(user_data);
+   connection->reserve = NULL;
 
    xTaskCreate(disconnect_connection_task, "disconnect_connection_task", 180, connection, 1, NULL);
 }
@@ -405,9 +428,7 @@ void disconnect_connection_task(void *pvParameters) {
 
    espconn_regist_disconcb(connection, NULL);
    espconn_disconnect(connection); // Don't call this API in any espconn callback
-   espconn_delete(connection);
    FREE(connection);
-   xSemaphoreGive(requests_mutex_g);
 
    #if defined(ALLOW_USE_PRINTF) && defined(USE_MALLOC_LOGGER)
    printf("\n Elements amount in malloc logger list: %u\n", get_malloc_logger_list_elements_amount());
@@ -415,6 +436,7 @@ void disconnect_connection_task(void *pvParameters) {
    printf("\n Free Heap size: %u\n", xPortGetFreeHeapSize());
    #endif
 
+   xSemaphoreGive(requests_mutex_g);
    vTaskDelete(NULL);
 }
 
@@ -660,7 +682,6 @@ void establish_connection(struct espconn *connection) {
          printf("Already connected");
          #endif
 
-         pending_connection_errors_counter_g++;
          break;
       case ESPCONN_ARG:
          #ifdef ALLOW_USE_PRINTF
@@ -675,6 +696,8 @@ void establish_connection(struct espconn *connection) {
 
    if (connection_status != ESPCONN_OK) {
       struct connection_user_data *user_data = connection->reserve;
+
+      connection_error_code_g = connection_status;
 
       if (user_data != NULL && user_data->execute_on_error != NULL) {
          user_data->execute_on_error(connection);
@@ -730,15 +753,30 @@ void send_status_info_task(void *pvParameters) {
       char free_heap_space[7];
       snprintf(free_heap_space, 7, "%u", xPortGetFreeHeapSize());
       char *reset_reason = "";
+      char *system_restart_reason = "";
 
       if (!read_flag(general_flags, FIRST_STATUS_INFO_SENT_FLAG)) {
-         set_flag(&general_flags, FIRST_STATUS_INFO_SENT_FLAG);
-
          reset_reason = generate_reset_reason();
+
+         unsigned int system_restart_reason_type;
+
+         system_rtc_mem_read(ERROR_TYPE_RTC_ADDRESS, &system_restart_reason_type, 4);
+
+         if (system_restart_reason_type == ACCESS_POINT_CONNECTION_ERROR) {
+            system_restart_reason = "AP connection error";
+         } else if (system_restart_reason_type == REQUEST_CONNECTION_ERROR) {
+            int connection_error_code;
+            char system_restart_reason_inner[25];
+
+            system_rtc_mem_read(CONNECTION_ERROR_CODE_RTC_ADDRESS, &connection_error_code, 4);
+
+            snprintf(system_restart_reason_inner, 25, "Request error. Code: %d", connection_error_code);
+            system_restart_reason = system_restart_reason_inner;
+         }
       }
 
       char *status_info_request_payload_template_parameters[] =
-            {signal_strength, device_name, errors_counter, pending_connection_errors_counter, uptime, build_timestamp, free_heap_space, reset_reason, NULL};
+            {signal_strength, device_name, errors_counter, pending_connection_errors_counter, uptime, build_timestamp, free_heap_space, reset_reason, system_restart_reason, NULL};
       char *status_info_request_payload_template = get_string_from_rom(STATUS_INFO_REQUEST_PAYLOAD_TEMPLATE);
       char *request_payload = set_string_parameters(status_info_request_payload_template, status_info_request_payload_template_parameters);
 
@@ -762,6 +800,7 @@ void send_status_info_task(void *pvParameters) {
 
       #ifdef ALLOW_USE_PRINTF
       printf("Request created:\n<<<\n%s>>>\n", request);
+      //printf("Request created\n");
       #endif
 
       struct espconn *connection = (struct espconn *) ZALLOC(sizeof(struct espconn), __LINE__, milliseconds_counter_g);
@@ -1210,10 +1249,41 @@ bool are_motion_sensors_turned_on() {
 }
 
 /**
- * Created as workaround to hanging issue.
+ * Created as workaround to handling issue.
  */
 void check_errors_amount() {
-   if (repetitive_errors_counter_g >= MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT) {
+   bool restart = false;
+
+   if (repetitive_request_errors_counter_g >= MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT) {
+      #ifdef ALLOW_USE_PRINTF
+      printf("\n Request errors amount: %u\n", repetitive_request_errors_counter_g);
+      #endif
+
+      int save_to_memory_data[] = {REQUEST_CONNECTION_ERROR, connection_error_code_g};
+
+      if (system_rtc_mem_write(ERROR_TYPE_RTC_ADDRESS, save_to_memory_data, 8) != true) {
+         #ifdef ALLOW_USE_PRINTF
+         printf("\n Error during saving request error into RTC memory\n");
+         #endif
+      }
+
+      restart = true;
+   } else if (repetitive_ap_connecting_errors_counter_g >= MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT) {
+      #ifdef ALLOW_USE_PRINTF
+      printf("\n AP connection errors amount: %u\n", repetitive_ap_connecting_errors_counter_g);
+      #endif
+
+      unsigned int system_restart_reason = ACCESS_POINT_CONNECTION_ERROR;
+
+      if (system_rtc_mem_write(ERROR_TYPE_RTC_ADDRESS, &system_restart_reason, 4) != true) {
+         #ifdef ALLOW_USE_PRINTF
+         printf("\n Error during saving AP connection error into RTC memory\n");
+         #endif
+      }
+
+      restart = true;
+   }
+   if (restart) {
       system_restart();
    }
 }
@@ -1223,6 +1293,37 @@ void testing_task(void *pvParameters) {
       xTaskCreate(input_pins_analyzer_task, "input_pins_analyzer_task", 256, "pin:MOTION_SENSOR_2", 1, NULL);
 
       vTaskDelay(5000 / portTICK_RATE_MS);
+   }
+}
+
+void send_random_alarm_from_ms(const char *rom_string) {
+   unsigned int next_delay = generate_rand(3000, 60000);
+
+   #ifdef ALLOW_USE_PRINTF
+   printf("\n Next delay of %s task: %ums\n", pcTaskGetTaskName(NULL), next_delay);
+   #endif
+
+   vTaskDelay(next_delay / portTICK_RATE_MS);
+
+   char *pin = get_string_from_rom(rom_string);
+   xTaskCreate(input_pins_analyzer_task, "input_pins_analyzer_task", 256, pin, 1, NULL);
+}
+
+void send_random_alarms_from_ms_1_task(void *pvParameters) {
+   for (;;) {
+      send_random_alarm_from_ms(MOTION_SENSOR_1_PIN_WITH_PREFIX);
+   }
+}
+
+void send_random_alarms_from_ms_2_task(void *pvParameters) {
+   for (;;) {
+      send_random_alarm_from_ms(MOTION_SENSOR_2_PIN_WITH_PREFIX);
+   }
+}
+
+void send_random_alarms_from_ms_3_task(void *pvParameters) {
+   for (;;) {
+      send_random_alarm_from_ms(MOTION_SENSOR_3_PIN_WITH_PREFIX);
    }
 }
 
@@ -1243,8 +1344,8 @@ void user_init(void) {
 
    os_timer_setfn(&ap_autoconnect_timer_g, (os_timer_func_t *) ap_autoconnect, NULL);
    os_timer_arm(&ap_autoconnect_timer_g, AP_AUTOCONNECT_INTERVAL_MS, true);
-
    xTaskCreate(ap_connect_task, "ap_connect_task", 180, NULL, 1, NULL);
+
    xTaskCreate(scan_access_point_task, "scan_access_point_task", 256, NULL, 1, NULL);
 
    requests_mutex_g = xSemaphoreCreateMutex();
@@ -1256,4 +1357,8 @@ void user_init(void) {
    os_timer_arm(&errors_checker_timer_g, ERRORS_CHECKER_INTERVAL_MS, true);
 
    start_100millisecons_counter();
+
+   //xTaskCreate(send_random_alarms_from_ms_1_task, "ms_1_task", 180, NULL, 1, NULL);
+   //xTaskCreate(send_random_alarms_from_ms_2_task, "ms_2_task", 180, NULL, 1, NULL);
+   //xTaskCreate(send_random_alarms_from_ms_3_task, "ms_3_task", 180, NULL, 1, NULL);
 }
