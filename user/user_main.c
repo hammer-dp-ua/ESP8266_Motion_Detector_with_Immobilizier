@@ -748,14 +748,17 @@ void send_status_info_task(void *pvParameters) {
       snprintf(pending_connection_errors_counter, 4, "%u", pending_connection_errors_counter_g);
       char uptime[11];
       snprintf(uptime, 11, "%u", milliseconds_counter_g / MILLISECONDS_COUNTER_DIVIDER);
-      char build_timestamp[30];
-      snprintf(build_timestamp, 30, "%s", __TIMESTAMP__);
+      char *build_timestamp = "";
       char free_heap_space[7];
       snprintf(free_heap_space, 7, "%u", xPortGetFreeHeapSize());
       char *reset_reason = "";
       char *system_restart_reason = "";
 
       if (!read_flag(general_flags, FIRST_STATUS_INFO_SENT_FLAG)) {
+         char build_timestamp_filled[30];
+         snprintf(build_timestamp_filled, 30, "%s", __TIMESTAMP__);
+         build_timestamp = build_timestamp_filled;
+
          reset_reason = generate_reset_reason();
 
          unsigned int system_restart_reason_type;
