@@ -162,7 +162,7 @@ void ap_autoconnect() {
       repetitive_ap_connecting_errors_counter_g++;
    }
 
-   if (repetitive_ap_connecting_errors_counter_g >= MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT) {
+   if (repetitive_ap_connecting_errors_counter_g == (MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT / 2)) {
       wifi_station_disconnect();
    }
 }
@@ -618,6 +618,9 @@ void ota_finished_callback(void *arg) {
       printf("[OTA] success; rebooting! Time: %u\n", milliseconds_counter_g);
       #endif
 
+      SYSTEM_RESTART_REASON_TYPE reason = SOFTWARE_UPGRADE;
+      system_rtc_mem_write(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, &reason, 4);
+
       system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
       system_upgrade_reboot();
    } else {
@@ -761,12 +764,18 @@ void send_status_info_task(void *pvParameters) {
 
          reset_reason = generate_reset_reason();
 
-         unsigned int system_restart_reason_type;
+         SYSTEM_RESTART_REASON_TYPE system_restart_reason_type;
 
-         system_rtc_mem_read(ERROR_TYPE_RTC_ADDRESS, &system_restart_reason_type, 4);
+         system_rtc_mem_read(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, &system_restart_reason_type, 4);
 
          if (system_restart_reason_type == ACCESS_POINT_CONNECTION_ERROR) {
-            system_restart_reason = "AP connection error";
+            int connection_error_code;
+            char system_restart_reason_inner[31];
+
+            system_rtc_mem_read(CONNECTION_ERROR_CODE_RTC_ADDRESS, &connection_error_code, 4);
+
+            snprintf(system_restart_reason_inner, 31, "AP connection error. Code: %d", connection_error_code);
+            system_restart_reason = system_restart_reason_inner;
          } else if (system_restart_reason_type == REQUEST_CONNECTION_ERROR) {
             int connection_error_code;
             char system_restart_reason_inner[25];
@@ -775,6 +784,8 @@ void send_status_info_task(void *pvParameters) {
 
             snprintf(system_restart_reason_inner, 25, "Request error. Code: %d", connection_error_code);
             system_restart_reason = system_restart_reason_inner;
+         } else if (system_restart_reason_type == SOFTWARE_UPGRADE) {
+            reset_reason = "Software upgrade";
          }
       }
 
@@ -1113,6 +1124,10 @@ void wifi_event_handler_callback(System_Event_t *event) {
          pin_output_set(AP_CONNECTION_STATUS_LED_PIN);
          turn_motion_sensors_on();
          repetitive_ap_connecting_errors_counter_g = 0;
+
+         if (!read_flag(general_flags, FIRST_STATUS_INFO_SENT_FLAG)) {
+            send_status_info();
+         }
          break;
       case EVENT_STAMODE_DISCONNECTED:
          #ifdef ALLOW_USE_PRINTF
@@ -1264,7 +1279,7 @@ void check_errors_amount() {
 
       int save_to_memory_data[] = {REQUEST_CONNECTION_ERROR, connection_error_code_g};
 
-      if (system_rtc_mem_write(ERROR_TYPE_RTC_ADDRESS, save_to_memory_data, 8) != true) {
+      if (system_rtc_mem_write(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, save_to_memory_data, 8) != true) {
          #ifdef ALLOW_USE_PRINTF
          printf("\n Error during saving request error into RTC memory\n");
          #endif
@@ -1276,9 +1291,10 @@ void check_errors_amount() {
       printf("\n AP connection errors amount: %u\n", repetitive_ap_connecting_errors_counter_g);
       #endif
 
-      unsigned int system_restart_reason = ACCESS_POINT_CONNECTION_ERROR;
+      STATION_STATUS status = wifi_station_get_connect_status();
+      int save_to_memory_data[] = {ACCESS_POINT_CONNECTION_ERROR, status};
 
-      if (system_rtc_mem_write(ERROR_TYPE_RTC_ADDRESS, &system_restart_reason, 4) != true) {
+      if (system_rtc_mem_write(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, save_to_memory_data, 8) != true) {
          #ifdef ALLOW_USE_PRINTF
          printf("\n Error during saving AP connection error into RTC memory\n");
          #endif
