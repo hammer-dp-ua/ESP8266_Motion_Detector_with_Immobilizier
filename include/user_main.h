@@ -16,7 +16,7 @@
 #endif
 
 #define LONG_POLLING_REQUEST_ERROR_OCCURRED_FLAG   1
-#define SERVER_IS_AVAILABLE_FLAG                   2
+#define CONNECTED_TO_AP_FLAG                       2
 #define UPDATE_FIRMWARE_FLAG                       4
 #define REQUEST_ERROR_OCCURRED_FLAG                8
 #define IGNORE_ALARMS_FLAG                         16
@@ -25,7 +25,6 @@
 #define IGNORE_IMMOBILIZER_BEEPER_FLAG             128
 #define IGNORE_IMMOBILIZER_FLAG                    256
 #define FIRST_STATUS_INFO_SENT_FLAG                512
-#define CONNECTED_TO_AP_FLAG                       1024
 
 #define REQUEST_IDLE_TIME_ON_ERROR        (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define REQUEST_MAX_DURATION_TIME         (10 * 1000 / portTICK_RATE_MS) // 10 sec

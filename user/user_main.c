@@ -788,7 +788,7 @@ void send_status_info_task(void *pvParameters) {
             snprintf(system_restart_reason_inner, 25, "Request error. Code: %d", connection_error_code);
             system_restart_reason = system_restart_reason_inner;
          } else if (system_restart_reason_type == SOFTWARE_UPGRADE) {
-            reset_reason = "Software upgrade";
+            system_restart_reason = "Software upgrade";
          }
       }
 
@@ -1349,7 +1349,7 @@ void blink_on_send_task(void *pvParameters) {
          pin_output_reset(pin);
       }
    } else if (pin == SERVER_AVAILABILITY_STATUS_LED_PIN) {
-      if (read_flag(general_flags, SERVER_IS_AVAILABLE_FLAG)) {
+      if (!read_flag(general_flags, REQUEST_ERROR_OCCURRED_FLAG)) {
          pin_output_set(pin);
       } else {
          pin_output_reset(pin);
