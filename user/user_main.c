@@ -148,6 +148,7 @@ void ap_connect_task(void *pvParameters) {
    STATION_STATUS status = wifi_station_get_connect_status();
 
    if (status != STATION_GOT_IP) {
+      xTaskCreate(blink_on_send_task, "blink_on_send_task", 180, (void *) AP_CONNECTION_STATUS_LED_PIN_TYPE, 1, NULL);
       wifi_station_connect(); // Do not call this API in user_init
    }
    vTaskDelete(NULL);
@@ -157,6 +158,7 @@ void ap_autoconnect() {
    STATION_STATUS status = wifi_station_get_connect_status();
 
    if (status != STATION_GOT_IP && status != STATION_CONNECTING) {
+      xTaskCreate(blink_on_send_task, "blink_on_send_task", 180, (void *) AP_CONNECTION_STATUS_LED_PIN_TYPE, 1, NULL);
       wifi_station_connect(); // Do not call this API in user_init
    } else if (status != STATION_GOT_IP) {
       repetitive_ap_connecting_errors_counter_g++;
@@ -644,6 +646,7 @@ void establish_connection(struct espconn *connection) {
 
       return;
    }
+   xTaskCreate(blink_on_send_task, "blink_on_send_task", 180, (void *) SERVER_AVAILABILITY_STATUS_LED_PIN_TYPE, 1, NULL);
 
    int connection_status = espconn_connect(connection);
 
@@ -724,7 +727,7 @@ void send_status_info_task(void *pvParameters) {
       printf("send_status_requests_task started. Time: %u\n", milliseconds_counter_g);
       #endif
 
-      if (!read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN)) {
+      if (!read_flag(general_flags, CONNECTED_TO_AP_FLAG)) {
          #ifdef ALLOW_USE_PRINTF
          printf("Can't send status request, because not connected to AP. Time: %u\n", milliseconds_counter_g);
          #endif
@@ -1039,7 +1042,7 @@ void send_general_request_task(void *pvParameters) {
       printf("\n send_general_request_task started. Time: %u\n", milliseconds_counter_g);
       #endif
 
-      if (!read_output_pin_state(AP_CONNECTION_STATUS_LED_PIN)) {
+      if (!read_flag(general_flags, CONNECTED_TO_AP_FLAG)) {
          #ifdef ALLOW_USE_PRINTF
          printf("\n Can't send alarm request, because not connected to AP. Time: %u\n", milliseconds_counter_g);
          #endif
@@ -1122,6 +1125,7 @@ void wifi_event_handler_callback(System_Event_t *event) {
          #endif
 
          pin_output_set(AP_CONNECTION_STATUS_LED_PIN);
+         set_flag(&general_flags, CONNECTED_TO_AP_FLAG);
          turn_motion_sensors_on();
          repetitive_ap_connecting_errors_counter_g = 0;
 
@@ -1136,6 +1140,7 @@ void wifi_event_handler_callback(System_Event_t *event) {
 
          pin_output_reset(AP_CONNECTION_STATUS_LED_PIN);
          pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
+         reset_flag(&general_flags, CONNECTED_TO_AP_FLAG);
          break;
    }
 }
@@ -1305,6 +1310,52 @@ void check_errors_amount() {
    if (restart) {
       system_restart();
    }
+}
+
+void blink_on_send_task(void *pvParameters) {
+   #ifdef ALLOW_USE_PRINTF
+   printf("blink_on_send_task has been created. ");
+   #endif
+
+   if (pvParameters == NULL) {
+      vTaskDelete(NULL);
+   }
+
+   LED_PIN_TYPE pin = (LED_PIN_TYPE) pvParameters;
+
+   #ifdef ALLOW_USE_PRINTF
+   printf("Pin: %u\n", pin);
+   #endif
+
+   bool initial_pin_state = read_output_pin_state(pin);
+   bool pin_state_changed_during_blinking = false;
+   unsigned char i;
+
+   for (i = 0; i < 4; i++) {
+      bool set_pin = initial_pin_state ? i % 2 == 1 : i % 2 == 0;
+
+      if (set_pin) {
+         pin_output_set(pin);
+      } else {
+         pin_output_reset(pin);
+      }
+      vTaskDelay(100 / portTICK_RATE_MS);
+   }
+
+   if (pin == AP_CONNECTION_STATUS_LED_PIN) {
+      if (read_flag(general_flags, CONNECTED_TO_AP_FLAG)) {
+         pin_output_set(pin);
+      } else {
+         pin_output_reset(pin);
+      }
+   } else if (pin == SERVER_AVAILABILITY_STATUS_LED_PIN) {
+      if (read_flag(general_flags, SERVER_IS_AVAILABLE_FLAG)) {
+         pin_output_set(pin);
+      } else {
+         pin_output_reset(pin);
+      }
+   }
+   vTaskDelete(NULL);
 }
 
 void testing_task(void *pvParameters) {

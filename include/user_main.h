@@ -25,6 +25,7 @@
 #define IGNORE_IMMOBILIZER_BEEPER_FLAG             128
 #define IGNORE_IMMOBILIZER_FLAG                    256
 #define FIRST_STATUS_INFO_SENT_FLAG                512
+#define CONNECTED_TO_AP_FLAG                       1024
 
 #define REQUEST_IDLE_TIME_ON_ERROR        (10 * 1000 / portTICK_RATE_MS) // 10 sec
 #define REQUEST_MAX_DURATION_TIME         (10 * 1000 / portTICK_RATE_MS) // 10 sec
@@ -150,6 +151,11 @@ typedef enum {
    SOFTWARE_UPGRADE
 } SYSTEM_RESTART_REASON_TYPE;
 
+typedef enum {
+   AP_CONNECTION_STATUS_LED_PIN_TYPE = AP_CONNECTION_STATUS_LED_PIN,
+   SERVER_AVAILABILITY_STATUS_LED_PIN_TYPE = SERVER_AVAILABILITY_STATUS_LED_PIN
+} LED_PIN_TYPE;
+
 void scan_access_point_task(void *pvParameters);
 void send_long_polling_requests_task(void *pvParameters);
 void ap_connect_task(void *pvParameters);
@@ -185,6 +191,6 @@ void check_for_update_firmware(char *response);
 void ota_finished_callback(void *arg);
 void disconnect_connection_task(void *pvParameters);
 void check_errors_amount();
-
+void blink_on_send_task(void *pvParameters);
 
 #endif

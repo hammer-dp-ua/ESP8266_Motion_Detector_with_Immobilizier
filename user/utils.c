@@ -1,15 +1,15 @@
 #include "utils.h"
 
-void set_flag(unsigned int *flags, unsigned int flag_value) {
-   *flags |= flag_value;
+void set_flag(unsigned int *flags, unsigned int flag) {
+   *flags |= flag;
 }
 
-void reset_flag(unsigned int *flags, unsigned int flag_value) {
-   *flags &= ~(*flags & flag_value);
+void reset_flag(unsigned int *flags, unsigned int flag) {
+   *flags &= ~(*flags & flag);
 }
 
-bool read_flag(unsigned int flags, unsigned int flag_value) {
-   return (flags & flag_value) ? true : false;
+bool read_flag(unsigned int flags, unsigned int flag) {
+   return (flags & flag) ? true : false;
 }
 
 /**
