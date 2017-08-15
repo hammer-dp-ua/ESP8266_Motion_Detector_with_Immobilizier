@@ -160,7 +160,8 @@ void ap_autoconnect() {
    if (status != STATION_GOT_IP && status != STATION_CONNECTING) {
       xTaskCreate(blink_on_send_task, "blink_on_send_task", 180, (void *) AP_CONNECTION_STATUS_LED_PIN_TYPE, 1, NULL);
       wifi_station_connect(); // Do not call this API in user_init
-   } else if (status != STATION_GOT_IP) {
+   }
+   if (status != STATION_GOT_IP) {
       repetitive_ap_connecting_errors_counter_g++;
    }
 
@@ -1282,29 +1283,21 @@ void check_errors_amount() {
       printf("\n Request errors amount: %u\n", repetitive_request_errors_counter_g);
       #endif
 
-      int save_to_memory_data[] = {REQUEST_CONNECTION_ERROR, connection_error_code_g};
+      SYSTEM_RESTART_REASON_TYPE system_restart_reason_type = REQUEST_CONNECTION_ERROR;
 
-      if (system_rtc_mem_write(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, save_to_memory_data, 8) != true) {
-         #ifdef ALLOW_USE_PRINTF
-         printf("\n Error during saving request error into RTC memory\n");
-         #endif
-      }
-
+      system_rtc_mem_write(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, &system_restart_reason_type, 4);
+      system_rtc_mem_write(CONNECTION_ERROR_CODE_RTC_ADDRESS, &connection_error_code_g, 4);
       restart = true;
    } else if (repetitive_ap_connecting_errors_counter_g >= MAX_REPETITIVE_ALLOWED_ERRORS_AMOUNT) {
       #ifdef ALLOW_USE_PRINTF
       printf("\n AP connection errors amount: %u\n", repetitive_ap_connecting_errors_counter_g);
       #endif
 
+      SYSTEM_RESTART_REASON_TYPE system_restart_reason_type = ACCESS_POINT_CONNECTION_ERROR;
       STATION_STATUS status = wifi_station_get_connect_status();
-      int save_to_memory_data[] = {ACCESS_POINT_CONNECTION_ERROR, status};
 
-      if (system_rtc_mem_write(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, save_to_memory_data, 8) != true) {
-         #ifdef ALLOW_USE_PRINTF
-         printf("\n Error during saving AP connection error into RTC memory\n");
-         #endif
-      }
-
+      system_rtc_mem_write(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, &system_restart_reason_type, 4);
+      system_rtc_mem_write(CONNECTION_ERROR_CODE_RTC_ADDRESS, &status, 4);
       restart = true;
    }
    if (restart) {
