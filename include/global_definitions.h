@@ -6,3 +6,7 @@
    #define true 1
    #define false 0
 #endif
+
+#ifndef __TIMESTAMP__
+   #define __TIMESTAMP__ ""
+#endif

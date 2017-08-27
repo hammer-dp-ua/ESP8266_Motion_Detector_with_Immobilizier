@@ -22,6 +22,7 @@
 #include "upgrade.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "freertos/semphr.h"
 #include "device_settings.h"
 #include "espconn.h"
 #include "utils.h"
@@ -53,7 +54,7 @@ unsigned int general_flags;
 
 struct motion_sensor *alarm_sources_g[ALARM_SOURCES_AMOUNT];
 
-xSemaphoreHandle requests_mutex_g;
+xSemaphoreHandle requests_binary_semaphore_g;
 xSemaphoreHandle buzzer_semaphore_g;
 
 xTimerHandle alarm_timers_g[ALARM_TIMERS_MAX_AMOUNT];
@@ -226,7 +227,8 @@ void successfull_connected_tcp_handler_callback(void *arg) {
 
    if (sent_status != 0) {
       void (*execute_on_error)(struct espconn *connection) = user_data->execute_on_error;
-      if (execute_on_error) {
+
+      if (execute_on_error != NULL) {
          execute_on_error(connection);
       }
    }
@@ -292,9 +294,6 @@ void tcp_response_received_handler_callback(void *arg, char *pdata, unsigned sho
       }
       FREE(server_sent);
    }
-
-   // Don't call this API in any espconn callback. If needed, please use system task to trigger espconn_disconnect.
-   //espconn_disconnect(connection);
 }
 
 void tcp_request_successfully_sent_handler_callback() {
@@ -311,19 +310,13 @@ void status_request_on_disconnect_callback(struct espconn *connection) {
    #endif
 
    struct connection_user_data *user_data = connection->reserve;
-   xTaskHandle parent_task = user_data->parent_task;
 
    if (!user_data->response_received && user_data->execute_on_error != NULL) {
       user_data->execute_on_error(connection);
       return;
    }
-   if (parent_task != NULL) {
-      #ifdef ALLOW_USE_PRINTF
-      printf("parent task of status request is to be deleted...\n");
-      #endif
 
-      vTaskDelete(parent_task);
-   }
+   pin_output_set(SERVER_AVAILABILITY_STATUS_LED_PIN);
    if (!read_flag(general_flags, FIRST_STATUS_INFO_SENT_FLAG)) {
       set_flag(&general_flags, FIRST_STATUS_INFO_SENT_FLAG);
    }
@@ -332,15 +325,14 @@ void status_request_on_disconnect_callback(struct espconn *connection) {
    repetitive_request_errors_counter_g = 0;
 
    check_for_update_firmware(user_data->response);
-
-   pin_output_set(SERVER_AVAILABILITY_STATUS_LED_PIN);
    request_finish_action(connection);
 
    if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
       upgrade_firmware();
-   } else {
-      schedule_sending_status_info();
+      return;
    }
+
+   schedule_sending_status_info(STATUS_REQUESTS_SEND_INTERVAL_MS);
 }
 
 void status_request_on_error_callback(struct espconn *connection) {
@@ -352,8 +344,8 @@ void status_request_on_error_callback(struct espconn *connection) {
    repetitive_request_errors_counter_g++;
 
    pin_output_reset(SERVER_AVAILABILITY_STATUS_LED_PIN);
-   set_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
    request_finish_action(connection);
+   schedule_sending_status_info(10000);
 }
 
 void general_request_on_disconnect_callback(struct espconn *connection) {
@@ -439,7 +431,8 @@ void disconnect_connection_task(void *pvParameters) {
    printf("\n Free Heap size: %u\n", xPortGetFreeHeapSize());
    #endif
 
-   xSemaphoreGive(requests_mutex_g);
+   portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
+   xSemaphoreGiveFromISR(requests_binary_semaphore_g, &xHigherPriorityTaskWoken);
    vTaskDelete(NULL);
 }
 
@@ -533,14 +526,6 @@ void timeout_request_supervisor_task(void *pvParameters) {
    #ifdef ALLOW_USE_PRINTF
    printf("\n Request timeout. Time: %u\n", milliseconds_counter_g);
    #endif
-
-   if (connection->state == ESPCONN_CONNECT) {
-      #ifdef ALLOW_USE_PRINTF
-      printf("\n Was connected\n");
-      #endif
-
-      espconn_disconnect(connection);
-   }
 
    // To not delete this task in other functions
    user_data->timeout_request_supervisor_task = NULL;
@@ -717,153 +702,144 @@ void send_status_info_task(void *pvParameters) {
    printf("send_status_requests_task has been created\n");
    #endif
 
-   for (;;) {
-      xSemaphoreTake(requests_mutex_g, portMAX_DELAY);
+   xSemaphoreTake(requests_binary_semaphore_g, portMAX_DELAY);
 
-      if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
-         vTaskDelete(NULL);
-      }
-
-      #ifdef ALLOW_USE_PRINTF
-      printf("send_status_requests_task started. Time: %u\n", milliseconds_counter_g);
-      #endif
-
-      if (!read_flag(general_flags, CONNECTED_TO_AP_FLAG)) {
-         #ifdef ALLOW_USE_PRINTF
-         printf("Can't send status request, because not connected to AP. Time: %u\n", milliseconds_counter_g);
-         #endif
-
-         xSemaphoreGive(requests_mutex_g);
-         vTaskDelay(2000 / portTICK_RATE_MS);
-         continue;
-      }
-
-      if (read_flag(general_flags, REQUEST_ERROR_OCCURRED_FLAG)) {
-         reset_flag(&general_flags, REQUEST_ERROR_OCCURRED_FLAG);
-
-         xSemaphoreGive(requests_mutex_g);
-         vTaskDelay(REQUEST_IDLE_TIME_ON_ERROR);
-         continue;
-      }
-
-      char signal_strength[5];
-      snprintf(signal_strength, 5, "%d", signal_strength_g);
-      char *device_name = get_string_from_rom(DEVICE_NAME);
-      char errors_counter[6];
-      snprintf(errors_counter, 6, "%u", errors_counter_g);
-      char pending_connection_errors_counter[4];
-      snprintf(pending_connection_errors_counter, 4, "%u", pending_connection_errors_counter_g);
-      char uptime[11];
-      snprintf(uptime, 11, "%u", milliseconds_counter_g / MILLISECONDS_COUNTER_DIVIDER);
-      char *build_timestamp = "";
-      char free_heap_space[7];
-      snprintf(free_heap_space, 7, "%u", xPortGetFreeHeapSize());
-      char *reset_reason = "";
-      char *system_restart_reason = "";
-
-      if (!read_flag(general_flags, FIRST_STATUS_INFO_SENT_FLAG)) {
-         char build_timestamp_filled[30];
-         snprintf(build_timestamp_filled, 30, "%s", __TIMESTAMP__);
-         build_timestamp = build_timestamp_filled;
-
-         reset_reason = generate_reset_reason();
-
-         SYSTEM_RESTART_REASON_TYPE system_restart_reason_type;
-
-         system_rtc_mem_read(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, &system_restart_reason_type, 4);
-
-         if (system_restart_reason_type == ACCESS_POINT_CONNECTION_ERROR) {
-            int connection_error_code;
-            char system_restart_reason_inner[31];
-
-            system_rtc_mem_read(CONNECTION_ERROR_CODE_RTC_ADDRESS, &connection_error_code, 4);
-
-            snprintf(system_restart_reason_inner, 31, "AP connection error. Code: %d", connection_error_code);
-            system_restart_reason = system_restart_reason_inner;
-         } else if (system_restart_reason_type == REQUEST_CONNECTION_ERROR) {
-            int connection_error_code;
-            char system_restart_reason_inner[25];
-
-            system_rtc_mem_read(CONNECTION_ERROR_CODE_RTC_ADDRESS, &connection_error_code, 4);
-
-            snprintf(system_restart_reason_inner, 25, "Request error. Code: %d", connection_error_code);
-            system_restart_reason = system_restart_reason_inner;
-         } else if (system_restart_reason_type == SOFTWARE_UPGRADE) {
-            system_restart_reason = "Software upgrade";
-         }
-      }
-
-      char *status_info_request_payload_template_parameters[] =
-            {signal_strength, device_name, errors_counter, pending_connection_errors_counter, uptime, build_timestamp, free_heap_space, reset_reason, system_restart_reason, NULL};
-      char *status_info_request_payload_template = get_string_from_rom(STATUS_INFO_REQUEST_PAYLOAD_TEMPLATE);
-      char *request_payload = set_string_parameters(status_info_request_payload_template, status_info_request_payload_template_parameters);
-
-      FREE(device_name);
-      FREE(status_info_request_payload_template);
-      if (strlen(reset_reason) > 1) {
-         FREE(reset_reason);
-      }
-
-      char *request_template = get_string_from_rom(STATUS_INFO_POST_REQUEST);
-      unsigned short request_payload_length = strnlen(request_payload, 0xFFFF);
-      char request_payload_length_string[6];
-      snprintf(request_payload_length_string, 6, "%u", request_payload_length);
-      char *server_ip_address = get_string_from_rom(SERVER_IP_ADDRESS);
-      char *request_template_parameters[] = {request_payload_length_string, server_ip_address, request_payload, NULL};
-      char *request = set_string_parameters(request_template, request_template_parameters);
-
-      FREE(request_payload);
-      FREE(request_template);
-      FREE(server_ip_address);
-
-      #ifdef ALLOW_USE_PRINTF
-      printf("Request created:\n<<<\n%s>>>\n", request);
-      //printf("Request created\n");
-      #endif
-
-      struct espconn *connection = (struct espconn *) ZALLOC(sizeof(struct espconn), __LINE__, milliseconds_counter_g);
-      struct connection_user_data *user_data =
-            (struct connection_user_data *) ZALLOC(sizeof(struct connection_user_data), __LINE__, milliseconds_counter_g);
-
-      user_data->response_received = false;
-      user_data->timeout_request_supervisor_task = NULL;
-      user_data->request = request;
-      user_data->response = NULL;
-      user_data->execute_on_disconnect = status_request_on_disconnect_callback;
-      user_data->execute_on_error = status_request_on_error_callback;
-      user_data->parent_task = xTaskGetCurrentTaskHandle();
-      user_data->request_max_duration_time = REQUEST_MAX_DURATION_TIME;
-      connection->reserve = user_data;
-      connection->type = ESPCONN_TCP;
-      connection->state = ESPCONN_NONE;
-
-      // remote IP of TCP server
-      unsigned char tcp_server_ip[] = {SERVER_IP_ADDRESS_1, SERVER_IP_ADDRESS_2, SERVER_IP_ADDRESS_3, SERVER_IP_ADDRESS_4};
-
-      connection->proto.tcp = &user_tcp;
-      memcpy(&connection->proto.tcp->remote_ip, tcp_server_ip, 4);
-      connection->proto.tcp->remote_port = SERVER_PORT;
-      connection->proto.tcp->local_port = espconn_port(); // local port of ESP8266
-
-      espconn_regist_connectcb(connection, successfull_connected_tcp_handler_callback);
-      espconn_regist_disconcb(connection, successfull_disconnected_tcp_handler_callback);
-      espconn_regist_reconcb(connection, tcp_connection_error_handler_callback);
-      espconn_regist_sentcb(connection, tcp_request_successfully_sent_handler_callback);
-      espconn_regist_recvcb(connection, tcp_response_received_handler_callback);
-      //espconn_regist_write_finish(&connection, tcp_request_successfully_written_into_buffer_handler_callback);
-
-      establish_connection(connection);
+   if (read_flag(general_flags, UPDATE_FIRMWARE_FLAG)) {
+      vTaskDelete(NULL);
    }
+
+   if (!read_flag(general_flags, CONNECTED_TO_AP_FLAG)) {
+      #ifdef ALLOW_USE_PRINTF
+      printf("Can't send status request, because not connected to AP. Time: %u\n", milliseconds_counter_g);
+      #endif
+
+      xSemaphoreGive(requests_binary_semaphore_g);
+      schedule_sending_status_info(2000);
+      vTaskDelete(NULL);
+   }
+
+   char signal_strength[5];
+   snprintf(signal_strength, 5, "%d", signal_strength_g);
+   char *device_name = get_string_from_rom(DEVICE_NAME);
+   char errors_counter[6];
+   snprintf(errors_counter, 6, "%u", errors_counter_g);
+   char pending_connection_errors_counter[4];
+   snprintf(pending_connection_errors_counter, 4, "%u", pending_connection_errors_counter_g);
+   char uptime[11];
+   snprintf(uptime, 11, "%u", milliseconds_counter_g / MILLISECONDS_COUNTER_DIVIDER);
+   char *build_timestamp = "";
+   char free_heap_space[7];
+   snprintf(free_heap_space, 7, "%u", xPortGetFreeHeapSize());
+   char *reset_reason = "";
+   char *system_restart_reason = "";
+
+   if (!read_flag(general_flags, FIRST_STATUS_INFO_SENT_FLAG)) {
+      char build_timestamp_filled[30];
+      snprintf(build_timestamp_filled, 30, "%s", __TIMESTAMP__);
+      build_timestamp = build_timestamp_filled;
+
+      reset_reason = generate_reset_reason();
+
+      SYSTEM_RESTART_REASON_TYPE system_restart_reason_type;
+
+      system_rtc_mem_read(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, &system_restart_reason_type, 4);
+
+      if (system_restart_reason_type == ACCESS_POINT_CONNECTION_ERROR) {
+         int connection_error_code;
+         char system_restart_reason_inner[31];
+
+         system_rtc_mem_read(CONNECTION_ERROR_CODE_RTC_ADDRESS, &connection_error_code, 4);
+
+         snprintf(system_restart_reason_inner, 31, "AP connection error. Code: %d", connection_error_code);
+         system_restart_reason = system_restart_reason_inner;
+      } else if (system_restart_reason_type == REQUEST_CONNECTION_ERROR) {
+         int connection_error_code;
+         char system_restart_reason_inner[25];
+
+         system_rtc_mem_read(CONNECTION_ERROR_CODE_RTC_ADDRESS, &connection_error_code, 4);
+
+         snprintf(system_restart_reason_inner, 25, "Request error. Code: %d", connection_error_code);
+         system_restart_reason = system_restart_reason_inner;
+      } else if (system_restart_reason_type == SOFTWARE_UPGRADE) {
+         system_restart_reason = "Software upgrade";
+      }
+
+      unsigned int overwrite_value = 0xFF;
+      system_rtc_mem_write(SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS, &overwrite_value, 4);
+      system_rtc_mem_write(CONNECTION_ERROR_CODE_RTC_ADDRESS, &overwrite_value, 4);
+   }
+
+   char *status_info_request_payload_template_parameters[] =
+         {signal_strength, device_name, errors_counter, pending_connection_errors_counter, uptime, build_timestamp, free_heap_space, reset_reason, system_restart_reason, NULL};
+   char *status_info_request_payload_template = get_string_from_rom(STATUS_INFO_REQUEST_PAYLOAD_TEMPLATE);
+   char *request_payload = set_string_parameters(status_info_request_payload_template, status_info_request_payload_template_parameters);
+
+   FREE(device_name);
+   FREE(status_info_request_payload_template);
+   if (strlen(reset_reason) > 1) {
+      FREE(reset_reason);
+   }
+
+   char *request_template = get_string_from_rom(STATUS_INFO_POST_REQUEST);
+   unsigned short request_payload_length = strnlen(request_payload, 0xFFFF);
+   char request_payload_length_string[6];
+   snprintf(request_payload_length_string, 6, "%u", request_payload_length);
+   char *server_ip_address = get_string_from_rom(SERVER_IP_ADDRESS);
+   char *request_template_parameters[] = {request_payload_length_string, server_ip_address, request_payload, NULL};
+   char *request = set_string_parameters(request_template, request_template_parameters);
+
+   FREE(request_payload);
+   FREE(request_template);
+   FREE(server_ip_address);
+
+   #ifdef ALLOW_USE_PRINTF
+   printf("Request created:\n<<<\n%s>>>\n", request);
+   #endif
+
+   struct espconn *connection = (struct espconn *) ZALLOC(sizeof(struct espconn), __LINE__, milliseconds_counter_g);
+   struct connection_user_data *user_data =
+         (struct connection_user_data *) ZALLOC(sizeof(struct connection_user_data), __LINE__, milliseconds_counter_g);
+
+   user_data->response_received = false;
+   user_data->timeout_request_supervisor_task = NULL;
+   user_data->request = request;
+   user_data->response = NULL;
+   user_data->execute_on_disconnect = status_request_on_disconnect_callback;
+   user_data->execute_on_error = status_request_on_error_callback;
+   user_data->parent_task = NULL;
+   user_data->request_max_duration_time = REQUEST_MAX_DURATION_TIME;
+   connection->reserve = user_data;
+   connection->type = ESPCONN_TCP;
+   connection->state = ESPCONN_NONE;
+
+   // remote IP of TCP server
+   unsigned char tcp_server_ip[] = {SERVER_IP_ADDRESS_1, SERVER_IP_ADDRESS_2, SERVER_IP_ADDRESS_3, SERVER_IP_ADDRESS_4};
+
+   connection->proto.tcp = &user_tcp;
+   memcpy(&connection->proto.tcp->remote_ip, tcp_server_ip, 4);
+   connection->proto.tcp->remote_port = SERVER_PORT;
+   connection->proto.tcp->local_port = espconn_port(); // local port of ESP8266
+
+   espconn_regist_connectcb(connection, successfull_connected_tcp_handler_callback);
+   espconn_regist_disconcb(connection, successfull_disconnected_tcp_handler_callback);
+   espconn_regist_reconcb(connection, tcp_connection_error_handler_callback);
+   espconn_regist_sentcb(connection, tcp_request_successfully_sent_handler_callback);
+   espconn_regist_recvcb(connection, tcp_response_received_handler_callback);
+   //espconn_regist_write_finish(&connection, tcp_request_successfully_written_into_buffer_handler_callback);
+
+   establish_connection(connection);
+
+   vTaskDelete(NULL);
 }
 
 void send_status_info() {
-   xTaskCreate(send_status_info_task, "send_status_info_task", 300, NULL, 1, NULL);
+   xTaskCreate(send_status_info_task, STATUS_INFO_TASK_NAME, 300, NULL, 1, NULL);
 }
 
-void schedule_sending_status_info() {
+void schedule_sending_status_info(unsigned int timeout_ms) {
    os_timer_disarm(&status_sender_timer_g);
    os_timer_setfn(&status_sender_timer_g, (os_timer_func_t *) send_status_info, NULL);
-   os_timer_arm(&status_sender_timer_g, STATUS_REQUESTS_SEND_INTERVAL_MS, false);
+   os_timer_arm(&status_sender_timer_g, timeout_ms, false);
 }
 
 bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request_type) {
@@ -1037,7 +1013,7 @@ void send_general_request_task(void *pvParameters) {
    FREE(request_data_param);
 
    for (;;) {
-      xSemaphoreTake(requests_mutex_g, portMAX_DELAY);
+      xSemaphoreTake(requests_binary_semaphore_g, portMAX_DELAY);
 
       #ifdef ALLOW_USE_PRINTF
       printf("\n send_general_request_task started. Time: %u\n", milliseconds_counter_g);
@@ -1316,10 +1292,6 @@ void blink_on_send_task(void *pvParameters) {
 
    LED_PIN_TYPE pin = (LED_PIN_TYPE) pvParameters;
 
-   #ifdef ALLOW_USE_PRINTF
-   printf("Pin: %u\n", pin);
-   #endif
-
    bool initial_pin_state = read_output_pin_state(pin);
    bool pin_state_changed_during_blinking = false;
    unsigned char i;
@@ -1401,6 +1373,8 @@ void user_init(void) {
    printf("\nSoftware is running from: %s\n", system_upgrade_userbin_check() ? "user2.bin" : "user1.bin");
    #endif
 
+   vSemaphoreCreateBinary(requests_binary_semaphore_g);
+
    wifi_set_event_handler_cb(wifi_event_handler_callback);
    set_default_wi_fi_settings();
    espconn_init();
@@ -1411,9 +1385,6 @@ void user_init(void) {
 
    xTaskCreate(scan_access_point_task, "scan_access_point_task", 256, NULL, 1, NULL);
 
-   requests_mutex_g = xSemaphoreCreateMutex();
-
-   schedule_sending_status_info();
    //xTaskCreate(testing_task, "testing_task", 200, NULL, 1, NULL);
 
    os_timer_setfn(&errors_checker_timer_g, (os_timer_func_t *) check_errors_amount, NULL);

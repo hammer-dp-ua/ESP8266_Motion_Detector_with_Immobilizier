@@ -27,7 +27,7 @@
 #define FIRST_STATUS_INFO_SENT_FLAG                512
 
 #define REQUEST_IDLE_TIME_ON_ERROR        (10 * 1000 / portTICK_RATE_MS) // 10 sec
-#define REQUEST_MAX_DURATION_TIME         (10 * 1000 / portTICK_RATE_MS) // 10 sec
+#define REQUEST_MAX_DURATION_TIME         (5 * 1000 / portTICK_RATE_MS) // 5 sec
 #define STATUS_REQUESTS_SEND_INTERVAL_MS  (30 * 1000)
 #define STATUS_REQUESTS_SEND_INTERVAL     (STATUS_REQUESTS_SEND_INTERVAL_MS / portTICK_RATE_MS) // 30 sec
 #define ERRORS_CHECKER_INTERVAL_MS        (30 * 1000)
@@ -54,6 +54,8 @@
 //#define CONNECTION_ERROR_CODE_FLASH_ADDRESS  FLASH_USER_DATA_START_ADDRESS + 4
 #define SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS  64
 #define CONNECTION_ERROR_CODE_RTC_ADDRESS       SYSTEM_RESTART_REASON_TYPE_RTC_ADDRESS + 1
+
+#define STATUS_INFO_TASK_NAME "send_status_info_task"
 
 char RESPONSE_SERVER_SENT_OK[] ICACHE_RODATA_ATTR = "\"statusCode\":\"OK\"";
 char STATUS_INFO_POST_REQUEST[] ICACHE_RODATA_ATTR =
@@ -185,7 +187,7 @@ void send_general_request(struct request_data *request_data_param, unsigned char
 bool is_alarm_being_ignored(struct motion_sensor *ms, GeneralRequestType request_type);
 void ignore_alarm(struct motion_sensor *ms, unsigned int timeout_ms);
 void stop_ignoring_alarm(xTimerHandle xTimer);
-void schedule_sending_status_info();
+void schedule_sending_status_info(unsigned int timeout_ms);
 void check_for_update_firmware(char *response);
 void ota_finished_callback(void *arg);
 void disconnect_connection_task(void *pvParameters);
